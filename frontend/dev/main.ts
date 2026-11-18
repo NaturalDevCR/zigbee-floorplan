@@ -7,7 +7,18 @@ const params = new URLSearchParams(location.search);
 if (params.has("bundle")) await import("../../custom_components/zigbee_floorplan/frontend/zigbee-floorplan.js");
 else await import("../src/index");
 const dark = params.has("dark");
+// ?prefs=<json> seeds the saved UI preferences (view, tab...) for reproducible screenshots
+if (params.has("prefs")) localStorage.setItem("zigbee-floorplan:prefs", params.get("prefs")!);
 const { project, network } = buildFixture();
+if (params.get("demo") === "weak") {
+  // a layout with weak spots: fewer routers and heavier interior walls
+  const drop = new Set(network.devices.filter((d) => ["Living room plug", "Dining light", "Garage repeater"].includes(d.name)).map((d) => d.ieee));
+  for (const ieee of drop) delete project.placements[ieee];
+  for (const f of project.floors) {
+    if (f.id !== "ground") continue;
+    f.walls = f.walls.map((w) => (w.material === "drywall" ? { ...w, material: "reinforced", thickness: 0.25 } : w));
+  }
+}
 const hass = createMockHass({
   project: params.has("empty") ? null : project,
   network: params.has("nodata") ? { bridge_online: null, devices: [], links: [], scan: { status: "idle", last_scan: null, error: null } } : network,

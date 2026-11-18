@@ -265,15 +265,18 @@ export class ZigbeeFloorplanPanel extends LitElement {
   private onControllerChange(): void {
     const ctrl = this.ctrl!;
     const p = ctrl.project;
-    if (!p.buildings.find((b) => b.id === this._buildingId)) {
-      this._buildingId = getFloor(p, this._floorId)?.buildingId ?? p.buildings[0]?.id ?? null;
-    }
-    const own = floorsOf(p, this._buildingId);
-    if (!own.find((f) => f.id === this._floorId)) this._floorId = own[0]?.id ?? null;
-    if (this._site) {
-      const levels = siteLevels(p);
-      if (!p.buildings.length) this._site = false;
-      else if (levels.length && !levels.includes(this._level)) this._level = levels[0];
+    // validate the remembered view only once the real project is loaded, or it would be reset
+    if (ctrl.ready) {
+      if (!p.buildings.find((b) => b.id === this._buildingId)) {
+        this._buildingId = getFloor(p, this._floorId)?.buildingId ?? p.buildings[0]?.id ?? null;
+      }
+      const own = floorsOf(p, this._buildingId);
+      if (!own.find((f) => f.id === this._floorId)) this._floorId = own[0]?.id ?? null;
+      if (this._site) {
+        const levels = siteLevels(p);
+        if (!p.buildings.length) this._site = false;
+        else if (levels.length && !levels.includes(this._level)) this._level = levels[0];
+      }
     }
     // only downgrade once permissions are known, so a remembered Edit mode survives loading
     if (ctrl.info && !ctrl.info.is_admin && this._mode === "edit") this._mode = "view";
