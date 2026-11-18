@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Zigbee Floorplan",
+        "description": "Visualiza tu red Zigbee2MQTT sobre planos interactivos.",
+        "data": { "base_topic": "Topic base de Zigbee2MQTT" },
+        "data_description": { "base_topic": "El `base_topic` de tu configuración de Zigbee2MQTT (normalmente `zigbee2mqtt`)." }
+      }
+    },
+    "error": { "invalid_topic": "Ingresa un topic MQTT simple, sin comodines ni barras al inicio o al final." },
+    "abort": { "single_instance_allowed": "Zigbee Floorplan ya está configurado." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Zigbee Floorplan",
+        "data": {
+          "base_topic": "Topic base de Zigbee2MQTT",
+          "scan_interval_hours": "Escaneo automático del mapa de red"
+        },
+        "data_description": {
+          "scan_interval_hours": "El escaneo genera carga breve en la red. Siempre puedes escanear manualmente desde el panel."
+        }
+      }
+    },
+    "error": { "invalid_topic": "Ingresa un topic MQTT simple, sin comodines ni barras al inicio o al final." }
+  },
+  "selector": {
+    "scan_interval": {
+      "options": { "0": "Solo manual", "6": "Cada 6 horas", "12": "Cada 12 horas", "24": "Cada 24 horas" }
+    }
+  }
+}

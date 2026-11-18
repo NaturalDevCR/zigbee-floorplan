@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Zigbee Floorplan",
+        "description": "Map your Zigbee2MQTT mesh on interactive floor plans.",
+        "data": { "base_topic": "Zigbee2MQTT base topic" },
+        "data_description": { "base_topic": "The `base_topic` from your Zigbee2MQTT configuration (usually `zigbee2mqtt`)." }
+      }
+    },
+    "error": { "invalid_topic": "Enter a plain MQTT topic without wildcards or leading/trailing slashes." },
+    "abort": { "single_instance_allowed": "Zigbee Floorplan is already configured." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Zigbee Floorplan options",
+        "data": {
+          "base_topic": "Zigbee2MQTT base topic",
+          "scan_interval_hours": "Automatic network map scan"
+        },
+        "data_description": {
+          "scan_interval_hours": "Network map scans briefly load the mesh. Manual scans are always available from the panel."
+        }
+      }
+    },
+    "error": { "invalid_topic": "Enter a plain MQTT topic without wildcards or leading/trailing slashes." }
+  },
+  "selector": {
+    "scan_interval": {
+      "options": { "0": "Manual only", "6": "Every 6 hours", "12": "Every 12 hours", "24": "Every 24 hours" }
+    }
+  }
+}
