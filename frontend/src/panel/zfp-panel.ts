@@ -928,6 +928,20 @@ export class ZigbeeFloorplanPanel extends LitElement {
       }
       .narrow .topbar {
         padding-left: 4px;
+        flex-wrap: wrap;
+        height: auto;
+        min-height: var(--header-height, 56px);
+        row-gap: 0;
+      }
+      .narrow .brand {
+        min-height: 56px;
+      }
+      .narrow .floors {
+        order: 10;
+        flex-basis: 100%;
+        margin: 0 0 8px;
+        min-height: 0;
+        padding: 0 8px;
       }
       .brand {
         display: flex;
@@ -1227,6 +1241,10 @@ export class ZigbeeFloorplanPanel extends LitElement {
       .tool-options {
         display: flex;
         gap: 6px;
+        max-width: 100%;
+        overflow-x: auto;
+        scrollbar-width: none;
+        box-sizing: border-box;
         padding: 4px;
         border-radius: 20px;
         background: var(--zfp-surface);

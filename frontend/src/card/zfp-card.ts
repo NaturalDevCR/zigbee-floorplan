@@ -298,7 +298,7 @@ export class ZigbeeFloorplanCard extends LitElement {
       }
       .stage {
         position: relative;
-        flex: 1;
+        flex: 1 1 auto;
         min-height: 150px;
       }
       zfp-canvas {

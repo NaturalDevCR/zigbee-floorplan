@@ -109,6 +109,8 @@ export class ZfpCanvas extends LitElement {
   private heatKey: unknown = null;
   private rafId = 0;
   private needsFit = true;
+  /** set once the user pans/zooms; until then resizes re-fit the content */
+  private userMoved = false;
   private colorProbe?: HTMLElement;
 
   constructor() {
@@ -151,16 +153,19 @@ export class ZfpCanvas extends LitElement {
   // ---------- public API ----------
 
   fit(animate = true): void {
+    this.userMoved = false;
     const box = this.contentBox();
     const target = fitViewport(box, this.size.w, this.size.h, 56);
     this.animateTo(animate ? target : null, target);
   }
 
   zoomBy(factor: number): void {
+    this.userMoved = true;
     this.animateTo({ ...zoomAt(this._vp, { x: this.size.w / 2, y: this.size.h / 2 }, factor) }, null);
   }
 
   centerOn(pt: Pt): void {
+    this.userMoved = true;
     const scale = Math.max(this._vp.scale, 60);
     this.animateTo({ scale, tx: this.size.w / 2 - pt.x * scale, ty: this.size.h / 2 - pt.y * scale }, null);
   }
@@ -214,11 +219,15 @@ export class ZfpCanvas extends LitElement {
     super.connectedCallback();
     this.ro = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect;
-      const first = this.size.w === 0;
+      const prev = this.size;
+      const first = prev.w === 0;
       this.size = { w: width, h: height };
-      if (first || this.needsFit) {
+      if (first || this.needsFit || !this.userMoved) {
         this.needsFit = false;
         this.fit(false);
+      } else {
+        // keep the view centered when side panels open/close
+        this._vp = { ...this._vp, tx: this._vp.tx + (width - prev.w) / 2, ty: this._vp.ty + (height - prev.h) / 2 };
       }
       this.drawBase();
       this._tick++;
@@ -518,11 +527,13 @@ export class ZfpCanvas extends LitElement {
       const d = dist(a, b);
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       const base = this.pinch.vp;
+      this.userMoved = true;
       const z = zoomAt(base, this.pinch.mid, d / this.pinch.d);
       this._vp = { ...z, tx: z.tx + mid.x - this.pinch.mid.x, ty: z.ty + mid.y - this.pinch.mid.y };
       return;
     }
     if (this.pan) {
+      this.userMoved = true;
       this._vp = { ...this.pan.vp, tx: this.pan.vp.tx + pt.x - this.pan.x, ty: this.pan.vp.ty + pt.y - this.pan.y };
       return;
     }
@@ -570,6 +581,7 @@ export class ZfpCanvas extends LitElement {
 
   private onWheel = (ev: WheelEvent): void => {
     ev.preventDefault();
+    this.userMoved = true;
     const pt = this.eventPoint(ev);
     const scaleDelta = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
     if (!ev.ctrlKey && Math.abs(ev.deltaX) > 0.5) {
@@ -736,10 +748,14 @@ export class ZfpCanvas extends LitElement {
   private renderRoomLabels(f: Floor) {
     if (this._vp.scale < 14) return nothing;
     return repeat(f.rooms, (r) => r.id, (r) => {
-      const c = toScreen(this._vp, polygonCentroid(r.points));
-      return svg`<g class="room-label" transform="translate(${c.x} ${c.y})">
-        <text text-anchor="middle" dy="-2">${r.name}</text>
-        <text class="area" text-anchor="middle" dy="13">${polygonArea(r.points).toFixed(1)} m²</text>
+      // top-left corner keeps labels clear of devices, which tend to sit mid-room
+      const box = bboxOf(r.points)!;
+      let anchor = toScreen(this._vp, { x: box.minX, y: box.minY });
+      anchor = { x: anchor.x + 10, y: anchor.y + 18 };
+      if (!pointInPolygon(toWorld(this._vp, anchor), r.points)) anchor = toScreen(this._vp, polygonCentroid(r.points));
+      return svg`<g class="room-label" transform="translate(${anchor.x} ${anchor.y})">
+        <text>${r.name}</text>
+        <text class="area" dy="14">${polygonArea(r.points).toFixed(1)} m²</text>
       </g>`;
     });
   }
@@ -758,7 +774,9 @@ export class ZfpCanvas extends LitElement {
   private renderLinks(f: Floor, devices: Map<string, ZDevice>) {
     const links = visibleLinks(this.network?.links ?? [], this.linkMode);
     const placements = this.shown.placements;
-    const highlighted = this._hoverDevice ?? this.highlight ?? this.selectedDevice();
+    const candidate = this._hoverDevice ?? this.highlight ?? this.selectedDevice();
+    // only focus when the device actually has links to show
+    const highlighted = candidate && links.some((l) => l.a === candidate || l.b === candidate) ? candidate : null;
     const out: SVGTemplateResult[] = [];
     const stubs: SVGTemplateResult[] = [];
     for (const link of links) {
@@ -798,7 +816,7 @@ export class ZfpCanvas extends LitElement {
           dx = 0.7;
           dy = -0.7;
         }
-        const k = 34 / Math.hypot(dx, dy);
+        const k = 52 / Math.hypot(dx, dy);
         const ex = s.x + dx * k;
         const ey = s.y + dy * k;
         const up = (otherFloor?.level ?? 0) > (this.floor?.level ?? 0);
@@ -824,7 +842,7 @@ export class ZfpCanvas extends LitElement {
     const order = { Coordinator: 3, Router: 2, EndDevice: 1, Unknown: 0 } as const;
     entries.sort(([a], [b]) => order[devices.get(a)?.type ?? "Unknown"] - order[devices.get(b)?.type ?? "Unknown"]);
     const est = this.rf?.deviceRssi ?? {};
-    const showLabels = this.layers.labels && this._vp.scale >= 18;
+    const showLabels = this.layers.labels && this._vp.scale >= 26;
     return svg`<g class="devices">${repeat(
       entries,
       ([ieee]) => ieee,

@@ -182,7 +182,7 @@ function renderDeviceInspector(ctx: PaneContext, ieee: string): TemplateResult {
               t("inspector.tx"),
               placement.txPower ?? NaN,
               (v) => ctx.editPlacement(ieee, { txPower: v }),
-              { step: 1, placeholder: t("inspector.tx_default", { value: txDefault(project.settings, type) }) },
+              { step: 1, placeholder: `${txDefault(project.settings, type)}` },
             )}
           </div>
         </section>`
@@ -238,7 +238,8 @@ export function renderDevicesPane(ctx: PaneContext): TemplateResult {
   const unplaced = devices.filter((d) => match(d) && !project.placements[d.ieee]);
   const missing = Object.keys(project.placements).filter((ieee) => !known.has(ieee) && (!q || ieee.includes(q)));
 
-  if (!devices.length && !missing.length) {
+  // without any network data every placement would look "missing"; say so instead
+  if (!devices.length) {
     return html`<div class="empty-pane">${icon(mdiMagnify, 32)}<p>${t("devices.none")}</p></div>`;
   }
   const group = (title: string, items: TemplateResult[], extra: TemplateResult | typeof nothing = nothing) =>

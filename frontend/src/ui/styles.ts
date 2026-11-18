@@ -118,8 +118,14 @@ export const controls = css`
   }
   .row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 10px;
+  }
+  .field {
+    min-width: 0;
+  }
+  select {
+    text-overflow: ellipsis;
   }
   input[type="text"],
   input[type="number"],

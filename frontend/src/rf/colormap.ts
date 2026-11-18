@@ -21,13 +21,14 @@ export function band(rssi: number): BandId {
 }
 
 // Smooth ramp; stops at dBm with [r,g,b,a].
+// Strong signal is a light tint so weak zones stand out and the plan stays legible.
 const STOPS: [number, [number, number, number, number]][] = [
-  [-100, [220, 38, 38, 150]],
-  [-92, [234, 88, 12, 140]],
-  [-84, [234, 179, 8, 120]],
-  [-74, [132, 204, 22, 105]],
-  [-62, [34, 197, 94, 95]],
-  [-55, [16, 185, 129, 90]],
+  [-100, [220, 38, 38, 170]],
+  [-92, [234, 88, 12, 150]],
+  [-84, [234, 179, 8, 125]],
+  [-74, [132, 204, 22, 85]],
+  [-62, [34, 197, 94, 50]],
+  [-55, [16, 185, 129, 34]],
 ];
 
 export function colorFor(rssi: number): [number, number, number, number] {

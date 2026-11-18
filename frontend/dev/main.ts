@@ -1,8 +1,10 @@
-import "../src/index";
 import { buildFixture } from "./fixture";
 import { createMockHass } from "./mock-hass";
 
 const params = new URLSearchParams(location.search);
+// ?bundle exercises the production build that Home Assistant serves
+if (params.has("bundle")) await import("../../custom_components/zigbee_floorplan/frontend/zigbee-floorplan.js");
+else await import("../src/index");
 const dark = params.has("dark");
 const { project, network } = buildFixture();
 const hass = createMockHass({

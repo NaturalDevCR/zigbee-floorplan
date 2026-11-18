@@ -4,15 +4,17 @@ import { resolve } from "node:path";
 export default defineConfig({
   build: {
     target: "es2022",
-    outDir: resolve(__dirname, "../custom_components/zigbee_floorplan/frontend"),
+    outDir: resolve(import.meta.dirname, "../custom_components/zigbee_floorplan/frontend"),
     emptyOutDir: true,
     sourcemap: false,
     minify: true,
     lib: {
-      entry: resolve(__dirname, "src/index.ts"),
+      entry: resolve(import.meta.dirname, "src/index.ts"),
       formats: ["es"],
       fileName: () => "zigbee-floorplan.js",
     },
+    // lib mode keeps whitespace in ES output; this is a final bundle, so minify fully
+    rolldownOptions: { output: { minify: true } },
   },
   worker: { format: "es" },
   test: {
