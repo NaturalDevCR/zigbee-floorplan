@@ -58,6 +58,7 @@ import {
   mdiSync,
 } from "../ui/icons";
 import { controls, tokens } from "../ui/styles";
+import { isStaleBundle } from "../version";
 import "../ui/toast";
 import type { ZfpToast } from "../ui/toast";
 import { paneStyles } from "./pane-styles";
@@ -193,6 +194,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
     super.connectedCallback();
     window.addEventListener("keydown", this.onKeyDown);
     document.addEventListener("visibilitychange", this.onVisibility);
+    window.addEventListener("connection-status", this.onConnectionStatus);
     if (this.hass) this.attachController();
   }
 
@@ -200,6 +202,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this.onKeyDown);
     document.removeEventListener("visibilitychange", this.onVisibility);
+    window.removeEventListener("connection-status", this.onConnectionStatus);
     void this.ctrl?.flush();
     this.detach?.();
     this.unNotice?.();
@@ -280,7 +283,21 @@ export class ZigbeeFloorplanPanel extends LitElement {
 
   private onVisibility = (): void => {
     if (document.visibilityState === "hidden") void this.ctrl?.flush();
+    else void this.ctrl?.refreshInfo();
   };
+
+  /** HA reconnects after a restart without reloading the page; re-check the served bundle. */
+  private onConnectionStatus = (ev: Event): void => {
+    if ((ev as CustomEvent<string>).detail === "connected") void this.ctrl?.refreshInfo();
+  };
+
+  private renderUpdateBar(): TemplateResult | typeof nothing {
+    if (!isStaleBundle(this.ctrl?.info?.frontend_hash)) return nothing;
+    return html`<div class="update-bar" role="status">
+      ${icon(mdiSync, 18)}<span>${this.t("banner.update")}</span>
+      <button class="btn small primary" @click=${() => location.reload()}>${this.t("action.reload")}</button>
+    </div>`;
+  }
 
   private get toast(): ZfpToast | null {
     return this.renderRoot.querySelector("zfp-toast");
@@ -574,6 +591,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
     return html`
       <div class="app ${this.narrow ? "narrow" : ""}">
         ${this.renderHeader()}
+        ${this.renderUpdateBar()}
         <div class="body ${showDrawer ? "with-drawer" : ""} ${editing ? "editing" : ""}">
           ${editing && floor ? this.renderRail() : nothing}
           <main class="stage">
@@ -1451,6 +1469,28 @@ export class ZigbeeFloorplanPanel extends LitElement {
         padding: 0 22px;
         border-radius: 22px;
         font-size: 15px;
+      }
+      .update-bar {
+        position: absolute;
+        top: calc(var(--header-height, 56px) + 12px);
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 25;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 6px 6px 14px;
+        border-radius: 20px;
+        background: var(--zfp-accent);
+        color: var(--zfp-on-accent);
+        box-shadow: var(--zfp-shadow-lg);
+        font-size: 14px;
+        white-space: nowrap;
+        animation: drop 0.2s var(--zfp-ease);
+      }
+      .update-bar .btn.primary {
+        background: var(--zfp-on-accent);
+        color: var(--zfp-accent);
       }
       .loading,
       .center-msg {

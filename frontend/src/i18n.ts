@@ -42,6 +42,7 @@ const en = {
   "action.more": "More",
   "action.menu": "Menu",
   "action.locate": "Locate",
+  "action.reload": "Reload",
 
   "save.saved": "Saved",
   "save.saving": "Saving…",
@@ -142,6 +143,7 @@ const en = {
   "banner.bridge_offline": "Zigbee2MQTT bridge is offline.",
   "banner.readonly": "View only — an administrator can edit this plan.",
   "banner.not_loaded": "Zigbee Floorplan integration is not loaded.",
+  "banner.update": "A new version of Zigbee Floorplan is installed.",
   "banner.scan_hint": "Scan the network to draw real mesh links.",
 
   "scan.never": "Never scanned",
@@ -243,6 +245,7 @@ const es: Partial<Record<I18nKey, string>> = {
   "action.more": "Más",
   "action.menu": "Menú",
   "action.locate": "Localizar",
+  "action.reload": "Recargar",
   "save.saved": "Guardado",
   "save.saving": "Guardando…",
   "save.dirty": "Sin guardar",
@@ -333,6 +336,7 @@ const es: Partial<Record<I18nKey, string>> = {
   "banner.bridge_offline": "El bridge de Zigbee2MQTT está desconectado.",
   "banner.readonly": "Solo lectura: un administrador puede editar este plano.",
   "banner.not_loaded": "La integración Zigbee Floorplan no está cargada.",
+  "banner.update": "Hay una nueva versión de Zigbee Floorplan instalada.",
   "banner.scan_hint": "Escanea la red para dibujar los enlaces reales.",
   "scan.never": "Nunca escaneada",
   "scan.last": "Escaneada {time}",

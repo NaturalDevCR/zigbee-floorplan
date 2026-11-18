@@ -39,6 +39,9 @@ async def test_info(hass: HomeAssistant, entry, hass_ws_client) -> None:
     assert msg["result"]["is_admin"] is True
     assert msg["result"]["base_topic"] == "zigbee2mqtt"
     assert msg["result"]["loaded"] is True
+    # lets an open browser tab detect it runs an outdated bundle
+    assert isinstance(msg["result"]["frontend_hash"], str)
+    assert msg["result"]["frontend_hash"]
 
 
 async def test_project_roundtrip(hass: HomeAssistant, entry, hass_ws_client) -> None:

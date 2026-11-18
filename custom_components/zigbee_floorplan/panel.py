@@ -21,6 +21,7 @@ from .const import (
 _FRONTEND_DIR = Path(__file__).parent / "frontend"
 _STATIC_REGISTERED = f"{DOMAIN}_static_registered"
 _JS_URL = f"{DOMAIN}_js_url"
+_JS_HASH = f"{DOMAIN}_js_hash"
 
 
 def _bundle_hash() -> str:
@@ -38,8 +39,10 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         )
         hass.data[_STATIC_REGISTERED] = True
 
-    url = f"{STATIC_URL}/{FRONTEND_FILE}?v={await hass.async_add_executor_job(_bundle_hash)}"
+    bundle_hash = await hass.async_add_executor_job(_bundle_hash)
+    url = f"{STATIC_URL}/{FRONTEND_FILE}?v={bundle_hash}"
     hass.data[_JS_URL] = url
+    hass.data[_JS_HASH] = bundle_hash
     frontend.add_extra_js_url(hass, url)
     await panel_custom.async_register_panel(
         hass,
@@ -51,6 +54,12 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         require_admin=False,
         config={},
     )
+
+
+@callback
+def frontend_hash(hass: HomeAssistant) -> str | None:
+    """Hash of the bundle currently served (the `v` query of its URL)."""
+    return hass.data.get(_JS_HASH)
 
 
 @callback

@@ -139,6 +139,16 @@ export class FloorplanController {
     this.emit();
   }
 
+  /** Re-read backend info, e.g. after Home Assistant reconnects. */
+  async refreshInfo(): Promise<void> {
+    try {
+      this.info = await this.api.info();
+      this.emit();
+    } catch {
+      /* keep last known info while HA is unavailable */
+    }
+  }
+
   private disconnect(): void {
     const unsubs = this.unsubs;
     this.unsubs = [];

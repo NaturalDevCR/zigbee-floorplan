@@ -14,6 +14,7 @@ from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, SIGNAL_NETWORK, SIGNAL_PROJECT, STATE_PUSH_INTERVAL
 from .images import async_delete_image
+from .panel import frontend_hash
 from .store import ProjectTooLarge, RevisionConflict
 from .z2m import ScanInProgress
 
@@ -56,6 +57,7 @@ async def ws_info(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
             "is_admin": connection.user.is_admin,
             "base_topic": data.adapter.base_topic if data else None,
             "loaded": data is not None,
+            "frontend_hash": frontend_hash(hass),
         },
     )
 

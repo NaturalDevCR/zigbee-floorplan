@@ -6,6 +6,7 @@ export interface InfoResult {
   is_admin: boolean;
   base_topic: string | null;
   loaded: boolean;
+  frontend_hash?: string | null;
 }
 
 export interface StoredProject {
