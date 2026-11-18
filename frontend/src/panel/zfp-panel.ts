@@ -80,6 +80,7 @@ interface Prefs {
   wallMaterial: MaterialId;
   wallThickness: number;
   gridSize: number;
+  mode: "view" | "edit";
 }
 
 function loadPrefs(): Partial<Prefs> {
@@ -156,7 +157,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
     const prefs = loadPrefs();
     this.narrow = false;
     this._floorId = null;
-    this._mode = "view";
+    this._mode = prefs.mode ?? "view";
     this._tool = "select";
     this._layers = { ...DEFAULT_LAYERS, ...prefs.layers };
     this._linkMode = prefs.linkMode ?? "tree";
@@ -220,6 +221,11 @@ export class ZigbeeFloorplanPanel extends LitElement {
     this.onControllerChange();
   }
 
+  protected firstUpdated(): void {
+    // start with the plan unobstructed where the drawer would float over it
+    if (!this.narrow && this.getBoundingClientRect().width < 1100) this._drawer = false;
+  }
+
   protected willUpdate(changed: PropertyValues<this>): void {
     if (changed.has("hass") && this.hass) {
       if (!this.detach) this.attachController();
@@ -232,7 +238,8 @@ export class ZigbeeFloorplanPanel extends LitElement {
     const ctrl = this.ctrl!;
     const floors = ctrl.project.floors;
     if (!floors.find((f) => f.id === this._floorId)) this._floorId = floors[0]?.id ?? null;
-    if (!ctrl.info?.is_admin && this._mode === "edit") this._mode = "view";
+    // only downgrade once permissions are known, so a remembered Edit mode survives loading
+    if (ctrl.info && !ctrl.info.is_admin && this._mode === "edit") this._mode = "view";
     const valid = new Set([
       ...(getFloor(ctrl.project, this._floorId)?.walls.map((w) => w.id) ?? []),
       ...(getFloor(ctrl.project, this._floorId)?.rooms.map((r) => r.id) ?? []),
@@ -318,6 +325,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
       wallMaterial: this._wallMaterial,
       wallThickness: this._wallThickness,
       gridSize: this._gridSize,
+      mode: this._mode,
     });
   }
 
@@ -339,6 +347,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
 
   private setMode(mode: "view" | "edit"): void {
     this._mode = mode;
+    this.persistPrefs();
     this._placing = null;
     this._tool = "select";
     if (mode === "view" && (this._tab === "floor" || this._tab === "inspector") && !this.selectedDevice()) this._tab = "devices";
@@ -367,6 +376,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
     if (id) {
       this.setFloor(id);
       this._mode = "edit";
+      this.persistPrefs();
       this._tool = "wall";
       this._tab = "floor";
       this._drawer = !this.narrow;
@@ -724,6 +734,8 @@ export class ZigbeeFloorplanPanel extends LitElement {
       .wallThickness=${this._wallThickness}
       .gridSize=${this._gridSize}
       .highlight=${this._highlight}
+      .editHint=${!!this.ctrl?.canEdit && this._mode === "view"}
+      @zfp-edit-hint=${() => this.toast?.show(this.t("hint.switch_to_edit"))}
       @zfp-commit=${(e: CustomEvent<{ fn: (p: Project) => Project }>) => this.edit(e.detail.fn)}
       @zfp-select=${(e: CustomEvent<{ ids: string[] }>) => {
         this._selection = e.detail.ids;
@@ -853,6 +865,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
       rf: this._rf,
       selection: this._selection,
       canEdit: this.canEdit,
+      canSwitchToEdit: !!this.ctrl?.canEdit && this._mode === "view",
       search: this._search,
       activeTool: this._tool,
       edit: this.edit,
@@ -933,6 +946,28 @@ export class ZigbeeFloorplanPanel extends LitElement {
         height: 100%;
         position: relative;
         overflow: hidden;
+        container: zfp-app / inline-size;
+      }
+      /* medium widths: the drawer floats over the plan instead of squeezing it */
+      @container zfp-app (max-width: 1100px) {
+        .app:not(.narrow) .body.with-drawer {
+          grid-template-columns: 1fr;
+        }
+        .app:not(.narrow) .body.editing.with-drawer {
+          grid-template-columns: 60px 1fr;
+        }
+        .app:not(.narrow) .drawer {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          bottom: 8px;
+          width: min(340px, calc(100% - 84px));
+          border: 1px solid var(--zfp-divider);
+          border-radius: 16px;
+          box-shadow: var(--zfp-shadow-lg);
+          z-index: 8;
+          overflow: hidden;
+        }
       }
       .topbar {
         display: flex;

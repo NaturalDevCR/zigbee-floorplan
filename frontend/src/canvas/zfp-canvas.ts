@@ -68,6 +68,7 @@ export class ZfpCanvas extends LitElement {
     wallThickness: { attribute: false },
     gridSize: { attribute: false },
     highlight: { attribute: false },
+    editHint: { attribute: false },
     _vp: { state: true },
     _preview: { state: true },
     _tick: { state: true },
@@ -91,6 +92,8 @@ export class ZfpCanvas extends LitElement {
   declare wallThickness: number;
   declare gridSize: number;
   declare highlight: string | null;
+  /** user could edit but is in view mode: hint when they try to drag */
+  declare editHint: boolean;
   declare _vp: Viewport;
   declare _preview: Project | null;
   declare _tick: number;
@@ -100,7 +103,9 @@ export class ZfpCanvas extends LitElement {
   private toolImpl: Tool = createTool("select");
   private readonly viewports = new Map<string, Viewport>();
   private readonly pointers = new Map<number, Pt>();
-  private pan: { x: number; y: number; vp: Viewport } | null = null;
+  private pan: { x: number; y: number; vp: Viewport; onItem?: boolean } | null = null;
+  /** view-mode press on a device: a click opens it, a drag hints at edit mode */
+  private viewPress: { ieee: string; x: number; y: number; hinted: boolean } | null = null;
   private pinch: { d: number; mid: Pt; vp: Viewport } | null = null;
   private spaceDown = false;
   private size = { w: 0, h: 0 };
@@ -129,6 +134,7 @@ export class ZfpCanvas extends LitElement {
     this.wallThickness = 0.15;
     this.gridSize = 0.25;
     this.highlight = null;
+    this.editHint = false;
     this._vp = { scale: 40, tx: 0, ty: 0 };
     this._preview = null;
     this._tick = 0;
@@ -425,7 +431,7 @@ export class ZfpCanvas extends LitElement {
     });
   }
 
-  private hitTest(ev: { clientX: number; clientY: number }): Hit | null {
+  private hitTest(ev: { clientX: number; clientY: number }, includeGeometry = this.editable): Hit | null {
     const s = this.eventPoint(ev);
     const w = toWorld(this._vp, s);
     const f = this.floor;
@@ -438,7 +444,7 @@ export class ZfpCanvas extends LitElement {
       if (d <= DEVICE_R + 4 && (!best || d < best.d)) best = { ieee, d };
     }
     if (best) return { kind: "device", ieee: best.ieee };
-    if (!this.editable) return null;
+    if (!includeGeometry) return null;
 
     const handleTol = 8;
     for (const wall of f.walls) {
@@ -505,13 +511,14 @@ export class ZfpCanvas extends LitElement {
       (!tool && !this.hitTest(ev)) ||
       (tool?.id === "select" && ev.pointerType === "touch" && !this.hitTest(ev));
     if (panGesture) {
-      this.pan = { x: pt.x, y: pt.y, vp: this._vp };
+      const onItem = !tool && this.editHint && !!this.hitTest(ev, true);
+      this.pan = { x: pt.x, y: pt.y, vp: this._vp, onItem };
       this._tick++;
       return;
     }
     if (!tool) {
       const hit = this.hitTest(ev);
-      if (hit?.kind === "device") this.emit("zfp-device-click", { ieee: hit.ieee });
+      if (hit?.kind === "device") this.viewPress = { ieee: hit.ieee, x: pt.x, y: pt.y, hinted: false };
       return;
     }
     tool.down(ev, this.host());
@@ -532,7 +539,19 @@ export class ZfpCanvas extends LitElement {
       this._vp = { ...z, tx: z.tx + mid.x - this.pinch.mid.x, ty: z.ty + mid.y - this.pinch.mid.y };
       return;
     }
+    if (this.viewPress) {
+      const vp = this.viewPress;
+      if (!vp.hinted && Math.hypot(pt.x - vp.x, pt.y - vp.y) > 6) {
+        vp.hinted = true;
+        if (this.editHint) this.emit("zfp-edit-hint");
+      }
+      return;
+    }
     if (this.pan) {
+      if (this.pan.onItem && Math.hypot(pt.x - this.pan.x, pt.y - this.pan.y) > 6) {
+        this.pan.onItem = false;
+        this.emit("zfp-edit-hint");
+      }
       this.userMoved = true;
       this._vp = { ...this.pan.vp, tx: this.pan.vp.tx + pt.x - this.pan.x, ty: this.pan.vp.ty + pt.y - this.pan.y };
       return;
@@ -559,6 +578,12 @@ export class ZfpCanvas extends LitElement {
         const [p] = [...this.pointers.values()];
         this.pan = { x: p.x, y: p.y, vp: this._vp };
       }
+      return;
+    }
+    if (this.viewPress) {
+      const press = this.viewPress;
+      this.viewPress = null;
+      if (!press.hinted) this.emit("zfp-device-click", { ieee: press.ieee });
       return;
     }
     if (this.pan) {

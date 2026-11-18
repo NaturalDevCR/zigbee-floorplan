@@ -16,6 +16,7 @@ const en = {
   "hint.measure": "Click two points to measure",
   "hint.pan": "Drag to move around · scroll or pinch to zoom",
   "hint.place": "Click on the plan to place {name} · Esc to cancel",
+  "hint.switch_to_edit": "Switch to Edit (top right) to place or move devices and walls.",
 
   "action.undo": "Undo",
   "action.redo": "Redo",
@@ -220,6 +221,7 @@ const es: Partial<Record<I18nKey, string>> = {
   "hint.measure": "Haz clic en dos puntos para medir",
   "hint.pan": "Arrastra para moverte · rueda o pellizca para hacer zoom",
   "hint.place": "Haz clic en el plano para ubicar {name} · Esc para cancelar",
+  "hint.switch_to_edit": "Cambia a Editar (arriba a la derecha) para colocar o mover dispositivos y paredes.",
   "action.undo": "Deshacer",
   "action.redo": "Rehacer",
   "action.fit": "Ajustar a la vista",

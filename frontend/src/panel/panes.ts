@@ -28,6 +28,8 @@ export interface PaneContext {
   rf: RfResult | null;
   selection: string[];
   canEdit: boolean;
+  /** admin currently in view mode */
+  canSwitchToEdit: boolean;
   search: string;
   /** apply an edit (one undo step) */
   edit(fn: (p: Project) => Project): void;
@@ -270,7 +272,11 @@ export function renderDevicesPane(ctx: PaneContext): TemplateResult {
             : undefined,
         ),
       ),
-      ctx.canEdit ? html`<p class="hint">${t("devices.drag_hint")}</p>` : nothing,
+      ctx.canEdit
+        ? html`<p class="hint">${t("devices.drag_hint")}</p>`
+        : ctx.canSwitchToEdit
+          ? html`<p class="hint">${t("hint.switch_to_edit")}</p>`
+          : nothing,
     )}
     ${group(t("devices.placed"), here.map((d) => deviceRow(ctx, d.ieee, d)))}
     ${group(
