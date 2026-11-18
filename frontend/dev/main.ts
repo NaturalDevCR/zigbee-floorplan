@@ -24,6 +24,7 @@ if (view === "card") {
   root.className = "cards";
   for (const cfg of [
     { type: "custom:zigbee-floorplan-card", title: "Red Zigbee", height: 420 },
+    { type: "custom:zigbee-floorplan-card", title: "Sitio", building: "site", height: 360 },
     { type: "custom:zigbee-floorplan-card", floor: "upper", height: 320, layers: ["links", "labels"], show_floor_tabs: false },
   ]) {
     const card = document.createElement("zigbee-floorplan-card") as HTMLElement & { setConfig(c: unknown): void; hass: unknown };

@@ -17,6 +17,7 @@ const room = (name: string, pts: [number, number][]) => ({ id: id(), name, point
 
 const ground: Floor = {
   id: "ground",
+  buildingId: "house",
   name: "Planta baja",
   level: 0,
   elevation: 0,
@@ -44,6 +45,7 @@ const ground: Floor = {
 
 const upper: Floor = {
   id: "upper",
+  buildingId: "house",
   name: "Segundo piso",
   level: 1,
   elevation: 2.95,
@@ -64,6 +66,21 @@ const upper: Floor = {
     room("Habitación niños", [[7, 0], [14, 0], [14, 6], [7, 6]]),
     room("Oficina", [[7, 6], [14, 6], [14, 10], [7, 10]]),
   ],
+};
+
+const workshop: Floor = {
+  id: "workshop",
+  buildingId: "shop",
+  name: "Taller",
+  level: 0,
+  elevation: 0,
+  height: 3.2,
+  slab: "slab_concrete",
+  walls: [
+    ...chain([[0, 0], [9, 0], [9, 6], [0, 6]], "block", 0.2, true),
+    ...chain([[5, 0], [5, 6]], "drywall", 0.1),
+  ],
+  rooms: [room("Taller", [[0, 0], [5, 0], [5, 6], [0, 6]]), room("Bodega", [[5, 0], [9, 0], [9, 6], [5, 6]])],
 };
 
 type Spec = [name: string, type: DeviceType, floor: string | null, x: number, y: number, model: string, vendor: string, battery?: number];
@@ -87,6 +104,9 @@ const SPECS: Spec[] = [
   ["Movimiento niños", "EndDevice", "upper", 13, 1, "RTCGQ11LM", "Aqara", 33],
   ["Vibración cuna", "EndDevice", "upper", 10, 3, "DJT11LM", "Aqara", 88],
   ["Persiana oficina", "EndDevice", "upper", 13.5, 9.6, "TS130F", "Tuya", 70],
+  ["Enchufe taller", "Router", "workshop", 1.5, 3, "TS011F", "Tuya", undefined],
+  ["Puerta bodega", "EndDevice", "workshop", 8.6, 3, "MCCGQ11LM", "Aqara", 58],
+  ["Temp bodega", "EndDevice", "workshop", 7, 1, "SNZB-02", "SONOFF", 71],
   ["Temp ático", "EndDevice", null, 0, 0, "SNZB-02", "SONOFF", 95],
   ["Botón mesa noche", "EndDevice", null, 0, 0, "WXKG11LM", "Aqara", 100],
 ];
@@ -96,7 +116,7 @@ function ieeeOf(i: number) {
 }
 
 export function buildFixture(): { project: Project; network: NetworkState } {
-  const floors = [ground, upper];
+  const floors = [ground, upper, workshop];
   const placements: Project["placements"] = {};
   const devices: ZDevice[] = SPECS.map(([name, type, floor, x, y, model, vendor, battery], i) => {
     const ieee = ieeeOf(i);
@@ -120,7 +140,16 @@ export function buildFixture(): { project: Project; network: NetworkState } {
     };
   });
 
-  const project: Project = { version: 1, floors, placements, settings: { ...DEFAULT_RF } };
+  const project: Project = {
+    version: 1,
+    buildings: [
+      { id: "house", name: "Casa", color: "#7c3aed", x: 0, y: 0, visible: true },
+      { id: "shop", name: "Taller", color: "#0284c7", x: 19, y: 2, visible: true },
+    ],
+    floors,
+    placements,
+    settings: { ...DEFAULT_RF },
+  };
 
   // Ground truth model with hidden parameters, used to synthesize realistic LQI.
   const truth = new RfScene(

@@ -81,6 +81,8 @@ async def test_too_large(hass: HomeAssistant, monkeypatch) -> None:
         {"version": 1, "floors": [{"name": "x", "level": 0}]},
         {"version": 1, "floors": "nope"},
         {"version": 1, "floors": [], "placements": {"0x1": {"floorId": "f", "x": "a", "y": 1}}},
+        {"version": 1, "buildings": [{"id": "b", "name": "B", "x": "far"}], "floors": []},
+        {"version": 1, "buildings": [{"name": "no id"}], "floors": []},
         {"version": 1, "floors": [{"id": "f", "name": "x", "level": 0,
                                    "walls": [{"id": "w", "a": {"x": 0}, "b": {"x": 1, "y": 1}}]}]},
     ],
@@ -109,3 +111,16 @@ async def test_network_cache(hass: HomeAssistant) -> None:
     assert await cache.async_load() is None
     await cache.async_save({"links": [], "last_scan": "2026-11-18T00:00:00+00:00"})
     assert (await NetworkCache(hass).async_load())["last_scan"].startswith("2026")
+
+
+async def test_buildings_roundtrip(hass: HomeAssistant) -> None:
+    st = ProjectStore(hass)
+    await st.async_load()
+    data = project(buildings=[{"id": "b1", "name": "Casa", "color": "#7c3aed", "x": 12.5, "y": -3, "visible": False}])
+    data["floors"][0]["buildingId"] = "b1"
+    await st.async_save(data, base_revision=0)
+    st2 = ProjectStore(hass)
+    await st2.async_load()
+    saved = st2.data["project"]
+    assert saved["buildings"][0]["visible"] is False
+    assert saved["floors"][0]["buildingId"] == "b1"

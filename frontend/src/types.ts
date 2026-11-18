@@ -44,8 +44,20 @@ export interface FloorBackground {
   visible: boolean;
 }
 
+/** A building or zone; its floors use local coordinates offset by (x, y) on the site. */
+export interface Building {
+  id: string;
+  name: string;
+  color: string;
+  x: number;
+  y: number;
+  /** shown in the site view */
+  visible: boolean;
+}
+
 export interface Floor {
   id: string;
+  buildingId: string;
   name: string;
   level: number;
   elevation: number;
@@ -86,6 +98,7 @@ export interface RfSettings {
 
 export interface Project {
   version: 1;
+  buildings: Building[];
   floors: Floor[];
   placements: Record<string, Placement>;
   settings: RfSettings;

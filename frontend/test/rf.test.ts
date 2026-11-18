@@ -11,11 +11,17 @@ const wall = (id: string, ax: number, ay: number, bx: number, by: number, materi
 });
 
 const floor = (id: string, level: number, walls: Wall[] = [], extra: Partial<Floor> = {}): Floor => ({
-  id, name: id, level, elevation: level * 3, height: 2.7, slab: "slab_concrete", walls, rooms: [], ...extra,
+  id, buildingId: "b", name: id, level, elevation: level * 3, height: 2.7, slab: "slab_concrete", walls, rooms: [], ...extra,
 });
 
 function project(floors: Floor[], placements: Record<string, Placement>, settings = {}): Project {
-  return { version: 1, floors, placements, settings: { ...DEFAULT_RF, ...settings } };
+  return {
+    version: 1,
+    buildings: [{ id: "b", name: "B", color: "#7c3aed", x: 0, y: 0, visible: true }],
+    floors,
+    placements,
+    settings: { ...DEFAULT_RF, ...settings },
+  };
 }
 
 const types = (m: Record<string, DeviceType>) => new Map(Object.entries(m));
@@ -216,12 +222,67 @@ describe("runRf", () => {
       project: proj,
       devices: [{ ieee: "c", type: "Coordinator" }, { ieee: "s", type: "EndDevice" }],
       links: [],
-      floorId: "g",
+      floorIds: ["g"],
       suggest: true,
     });
-    expect(res.heat!.rgba.length).toBe(res.heat!.cols * res.heat!.rows * 4);
+    expect(res.heats).toHaveLength(1);
+    expect(res.heats[0].rgba.length).toBe(res.heats[0].cols * res.heats[0].rows * 4);
     expect(res.calibration.applied).toBe(false);
     expect(res.deviceRssi.s).toBeLessThan(-40);
     expect(res.deviceRssi.c).toBeUndefined();
+  });
+});
+
+describe("multiple buildings", () => {
+  const box = (w: number, h: number, material: Wall["material"]) => [
+    wall("n", 0, 0, w, 0, material), wall("e", w, 0, w, h, material),
+    wall("s", w, h, 0, h, material), wall("w", 0, h, 0, 0, material),
+  ];
+
+  function site(gap: number) {
+    const proj: Project = {
+      version: 1,
+      buildings: [
+        { id: "A", name: "A", color: "#000000", x: 0, y: 0, visible: true },
+        { id: "B", name: "B", color: "#000000", x: 10 + gap, y: 0, visible: true },
+      ],
+      floors: [
+        { ...floor("a0", 0, box(10, 6, "brick")), buildingId: "A" },
+        { ...floor("a1", 1, box(10, 6, "brick")), buildingId: "A" },
+        { ...floor("b0", 0, box(8, 6, "concrete")), buildingId: "B" },
+      ],
+      placements: { c: at("a0", 5, 3), s: at("b0", 4, 3) },
+      settings: { ...DEFAULT_RF },
+    };
+    return new RfScene(proj, types({ c: "Coordinator", s: "EndDevice" }));
+  }
+
+  it("places building floors in site coordinates", () => {
+    const scene = site(6);
+    expect(scene.nodes.get("s")!.pos).toEqual({ x: 20, y: 3 });
+    expect(scene.offsetOf("b0")).toEqual({ x: 16, y: 0 });
+  });
+
+  it("crosses both buildings' exterior walls and no slab between buildings", () => {
+    const scene = site(6);
+    const p = modelParams(DEFAULT_RF, null);
+    const c = scene.emitters[0];
+    const rx = { x: 20, y: 3 };
+    const free = 5 - 40 - 10 * 2.2 * Math.log10(15);
+    // brick wall of A (8 dB) + concrete wall of B (15 dB)
+    expect(scene.rssi(c, "b0", rx, 1, p)).toBeCloseTo(free - 8 - 15);
+  });
+
+  it("only counts slabs inside the same building", () => {
+    const scene = site(6);
+    expect(scene.obstruction("a0", { x: 5, y: 3 }, "a1", { x: 5, y: 3 })).toBe(20);
+  });
+
+  it("farther buildings get weaker signal", () => {
+    const p = modelParams(DEFAULT_RF, null);
+    const near = site(2);
+    const far = site(30);
+    const v = (sc: RfScene) => sc.bestRssi("b0", sc.nodes.get("s")!.pos, 1, p);
+    expect(v(near)).toBeGreaterThan(v(far));
   });
 });

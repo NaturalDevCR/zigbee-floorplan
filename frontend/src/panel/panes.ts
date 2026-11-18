@@ -7,7 +7,8 @@ import { MATERIALS, SLAB_MATERIALS, WALL_MATERIALS, materialDb } from "../materi
 import { BANDS } from "../rf/colormap";
 import type { RfResult } from "../rf/engine";
 import { txDefault } from "../rf/model";
-import type { Floor, MaterialId, NetworkState, Placement, Project, RfSettings, Room, Wall, ZDevice } from "../types";
+import { BUILDING_COLORS, floorsOf } from "../project/ops";
+import type { Building, Floor, MaterialId, NetworkState, Placement, Project, RfSettings, Room, Wall, ZDevice } from "../types";
 import { deviceHealth, HEALTH_COLOR, isWeakRssi, LQI_WEAK, lqiColor, TYPE_COLOR, TYPE_ICON } from "../ui/device-style";
 import {
   icon,
@@ -17,6 +18,7 @@ import {
   mdiLightbulbOnOutline,
   mdiMagnify,
   mdiMapMarkerPlusOutline,
+  mdiPlus,
   mdiRulerSquareCompass,
 } from "../ui/icons";
 
@@ -30,6 +32,14 @@ export interface PaneContext {
   canEdit: boolean;
   /** admin currently in view mode */
   canSwitchToEdit: boolean;
+  site: boolean;
+  /** floors drawn on the plan right now */
+  displayedFloorIds: string[];
+  building: Building | undefined;
+  editBuilding(id: string, patch: Partial<Building>): void;
+  deleteBuilding(id: string): void;
+  openBuilding(id: string): void;
+  addBuilding(): void;
   search: string;
   /** apply an edit (one undo step) */
   edit(fn: (p: Project) => Project): void;
@@ -233,9 +243,10 @@ export function renderDevicesPane(ctx: PaneContext): TemplateResult {
   const match = (d: ZDevice) =>
     !q || d.name.toLowerCase().includes(q) || d.ieee.includes(q) || (d.model ?? "").toLowerCase().includes(q);
   const known = new Set(devices.map((d) => d.ieee));
-  const here = devices.filter((d) => match(d) && project.placements[d.ieee]?.floorId === floor?.id);
+  const shown = new Set(ctx.displayedFloorIds);
+  const here = devices.filter((d) => match(d) && shown.has(project.placements[d.ieee]?.floorId));
   const elsewhere = devices.filter(
-    (d) => match(d) && project.placements[d.ieee] && project.placements[d.ieee].floorId !== floor?.id,
+    (d) => match(d) && project.placements[d.ieee] && !shown.has(project.placements[d.ieee].floorId),
   );
   const unplaced = devices.filter((d) => match(d) && !project.placements[d.ieee]);
   const missing = Object.keys(project.placements).filter((ieee) => !known.has(ieee) && (!q || ieee.includes(q)));
@@ -249,7 +260,12 @@ export function renderDevicesPane(ctx: PaneContext): TemplateResult {
       ? html`<section><div class="section-title">${title} <span class="count">${items.length}</span></div>${extra}
           <ul class="dev-list">${items}</ul></section>`
       : nothing;
-  const floorName = (id: string) => project.floors.find((f) => f.id === id)?.name ?? "";
+  const floorName = (id: string) => {
+    const f = project.floors.find((x) => x.id === id);
+    if (!f) return "";
+    const b = project.buildings.length > 1 ? project.buildings.find((x) => x.id === f.buildingId) : undefined;
+    return b ? `${b.name} · ${f.name}` : f.name;
+  };
 
   return html`
     <div class="search">
@@ -264,7 +280,7 @@ export function renderDevicesPane(ctx: PaneContext): TemplateResult {
           ctx,
           d.ieee,
           d,
-          ctx.canEdit && floor
+          ctx.canEdit && (floor || ctx.site)
             ? html`<button class="btn small" @click=${(e: Event) => {
                 e.stopPropagation();
                 ctx.startPlacing(d.ieee);
@@ -318,7 +334,7 @@ export function renderCoveragePane(ctx: PaneContext): TemplateResult {
     .filter((l) => l.lqi !== null && l.lqi < LQI_WEAK && project.placements[l.a] && project.placements[l.b])
     .sort((a, b) => (a.lqi ?? 0) - (b.lqi ?? 0))
     .slice(0, 8);
-  const suggestions = rf?.floorId === ctx.floor?.id ? (rf?.suggestions ?? []) : [];
+  const suggestions = (rf?.suggestions ?? []).filter((sg) => ctx.displayedFloorIds.includes(sg.floorId));
   const hasEmitter = Object.keys(project.placements).some((i) => {
     const ty = devices.get(i)?.type;
     return ty === "Coordinator" || ty === "Router";
@@ -399,7 +415,9 @@ export function renderFloorPane(ctx: PaneContext): TemplateResult {
   const bg = floor.background;
   const disabled = !ctx.canEdit;
   return html`
+    ${ctx.building ? renderBuildingSection(ctx, ctx.building) : nothing}
     <section>
+      <div class="section-title">${t("floor.settings")}</div>
       <label class="field"><span>${t("floor.name")}</span>
         <input type="text" .value=${floor.name} ?disabled=${disabled}
           @change=${(e: Event) => ctx.editFloor({ name: (e.target as HTMLInputElement).value || floor.name })} /></label>
@@ -445,6 +463,70 @@ export function renderFloorPane(ctx: PaneContext): TemplateResult {
           <button class="btn small" @click=${ctx.duplicateFloor}>${t("action.duplicate")}</button>
           <button class="btn small danger" @click=${ctx.deleteFloor}>${icon(mdiDeleteOutline, 16)} ${t("action.delete")}</button>
         </section>`
+      : nothing}
+  `;
+}
+
+// ---------- buildings ----------
+
+function colorPicker(ctx: PaneContext, b: Building): TemplateResult {
+  return html`<div class="swatches" role="radiogroup" aria-label=${ctx.t("building.color")}>
+    ${BUILDING_COLORS.map(
+      (c) => html`<button role="radio" aria-checked=${c === b.color} class="swatch ${c === b.color ? "on" : ""}"
+        style="background:${c}" ?disabled=${!ctx.canEdit}
+        @click=${() => ctx.editBuilding(b.id, { color: c })}></button>`,
+    )}
+  </div>`;
+}
+
+function renderBuildingSection(ctx: PaneContext, b: Building): TemplateResult {
+  const { t } = ctx;
+  const disabled = !ctx.canEdit;
+  return html`<section>
+    <div class="section-title">${t("building.section")}</div>
+    <label class="field"><span>${t("building.name")}</span>
+      <input type="text" .value=${b.name} ?disabled=${disabled}
+        @change=${(e: Event) => ctx.editBuilding(b.id, { name: (e.target as HTMLInputElement).value || b.name })} /></label>
+    <div class="field"><span>${t("building.color")}</span>${colorPicker(ctx, b)}</div>
+    ${ctx.canEdit && ctx.project.buildings.length > 1
+      ? html`<button class="btn small danger" @click=${() => ctx.deleteBuilding(b.id)}>
+          ${icon(mdiDeleteOutline, 16)} ${t("building.delete")}</button>`
+      : nothing}
+  </section>`;
+}
+
+export function renderBuildingsPane(ctx: PaneContext): TemplateResult {
+  const { t, project } = ctx;
+  return html`
+    <p class="hint">${t("site.hint")}</p>
+    <ul class="building-list">
+      ${project.buildings.map((b) => {
+        const floors = floorsOf(project, b.id);
+        return html`<li class="building-card ${b.visible ? "" : "hidden"}" style="--b:${b.color}">
+          <div class="b-head">
+            <span class="b-swatch"></span>
+            <span class="dev-text">
+              <span class="dev-name">${b.name}</span>
+              <span class="dev-sub">${floors.length === 1 ? t("building.floor_one") : t("building.floors", { n: floors.length })}</span>
+            </span>
+            <label class="toggle" title=${b.visible ? t("site.hide") : t("site.show")}>
+              <input type="checkbox" .checked=${b.visible} ?disabled=${!ctx.canEdit && !ctx.canSwitchToEdit}
+                @change=${(e: Event) => ctx.editBuilding(b.id, { visible: (e.target as HTMLInputElement).checked })} />
+            </label>
+            <button class="btn small" @click=${() => ctx.openBuilding(b.id)}>${t("site.open")}</button>
+          </div>
+          ${ctx.canEdit
+            ? html`<div class="row">
+                  ${numberField(`X (m)`, b.x, (v) => ctx.editBuilding(b.id, { x: v }), { step: 0.5 })}
+                  ${numberField(`Y (m)`, b.y, (v) => ctx.editBuilding(b.id, { y: v }), { step: 0.5 })}
+                </div>
+                ${colorPicker(ctx, b)}`
+            : nothing}
+        </li>`;
+      })}
+    </ul>
+    ${ctx.canEdit
+      ? html`<button class="btn" @click=${ctx.addBuilding}>${icon(mdiPlus, 18)} ${t("building.add")}</button>`
       : nothing}
   `;
 }

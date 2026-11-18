@@ -1,7 +1,8 @@
-import { add, dist } from "../geometry";
+import { add, bboxOf, dist, unionBBox } from "../geometry";
 import { isMaterialId } from "../materials";
 import { DEFAULT_RF } from "../rf/model";
 import type {
+  Building,
   Floor,
   FloorBackground,
   MaterialId,
@@ -25,8 +26,11 @@ export function newId(): string {
 }
 
 export function createProject(): Project {
-  return { version: 1, floors: [], placements: {}, settings: cloneSettings(DEFAULT_RF) };
+  return { version: 1, buildings: [], floors: [], placements: {}, settings: cloneSettings(DEFAULT_RF) };
 }
+
+export const BUILDING_COLORS = ["#7c3aed", "#0284c7", "#0d9488", "#d97706", "#db2777", "#4f46e5", "#65a30d", "#dc2626"];
+const BUILDING_GAP = 5;
 
 function cloneSettings(s: RfSettings): RfSettings {
   return { ...s, defaultTx: { ...s.defaultTx }, materials: { ...s.materials } };
@@ -42,12 +46,91 @@ export function getFloor(p: Project, floorId: string | null | undefined): Floor 
   return p.floors.find((f) => f.id === floorId);
 }
 
+export function getBuilding(p: Project, buildingId: string | null | undefined): Building | undefined {
+  return p.buildings.find((b) => b.id === buildingId);
+}
+
+/** Floors of one building, lowest level first. */
+export function floorsOf(p: Project, buildingId: string | null | undefined): Floor[] {
+  return p.floors.filter((f) => f.buildingId === buildingId);
+}
+
+/** Bounding box of a floor's geometry and devices, in the floor's local coordinates. */
+export function floorExtent(p: Project, floor: Floor) {
+  return bboxOf([
+    ...floor.walls.flatMap((w) => [w.a, w.b]),
+    ...floor.rooms.flatMap((r) => r.points),
+    ...Object.values(p.placements).filter((pl) => pl.floorId === floor.id),
+  ]);
+}
+
+/** Footprint of a building in its local coordinates (union of its floors). */
+export function buildingExtent(p: Project, buildingId: string) {
+  let box: ReturnType<typeof bboxOf> = null;
+  for (const f of floorsOf(p, buildingId)) box = unionBBox(box, floorExtent(p, f));
+  return box;
+}
+
+/** Floors shown in the site view at a level: one per visible building that has it. */
+export function floorsAtLevel(p: Project, level: number): Floor[] {
+  return p.buildings
+    .filter((b) => b.visible)
+    .map((b) => floorsOf(p, b.id).find((f) => f.level === level))
+    .filter((f): f is Floor => !!f);
+}
+
+/** Distinct levels across visible buildings, ascending. */
+export function siteLevels(p: Project): number[] {
+  const visible = new Set(p.buildings.filter((b) => b.visible).map((b) => b.id));
+  return [...new Set(p.floors.filter((f) => visible.has(f.buildingId)).map((f) => f.level))].sort((a, b) => a - b);
+}
+
+// ---------- buildings ----------
+
+export function addBuilding(p: Project, name: string): { project: Project; buildingId: string } {
+  // place new buildings to the right of the existing site so they don't overlap
+  let right = 0;
+  let top = 0;
+  for (const b of p.buildings) {
+    const box = buildingExtent(p, b.id);
+    right = Math.max(right, b.x + (box ? box.maxX : 0) + BUILDING_GAP);
+    top = Math.min(top, b.y + (box ? box.minY : 0));
+  }
+  const building: Building = {
+    id: newId(),
+    name,
+    color: BUILDING_COLORS[p.buildings.length % BUILDING_COLORS.length],
+    x: p.buildings.length ? round(right) : 0,
+    y: p.buildings.length ? round(top) : 0,
+    visible: true,
+  };
+  return { project: { ...p, buildings: [...p.buildings, building] }, buildingId: building.id };
+}
+
+export function updateBuilding(p: Project, buildingId: string, patch: Partial<Omit<Building, "id">>): Project {
+  return { ...p, buildings: p.buildings.map((b) => (b.id === buildingId ? { ...b, ...patch } : b)) };
+}
+
+/** Removes a building with its floors and the device placements on them. */
+export function removeBuilding(p: Project, buildingId: string): Project {
+  const gone = new Set(floorsOf(p, buildingId).map((f) => f.id));
+  const placements = Object.fromEntries(Object.entries(p.placements).filter(([, pl]) => !gone.has(pl.floorId)));
+  return {
+    ...p,
+    buildings: p.buildings.filter((b) => b.id !== buildingId),
+    floors: p.floors.filter((f) => !gone.has(f.id)),
+    placements,
+  };
+}
+
 // ---------- floors ----------
 
-export function addFloor(p: Project, name: string): { project: Project; floorId: string } {
-  const top = p.floors[p.floors.length - 1];
+export function addFloor(p: Project, name: string, buildingId: string): { project: Project; floorId: string } {
+  const own = floorsOf(p, buildingId);
+  const top = own[own.length - 1];
   const floor: Floor = {
     id: newId(),
+    buildingId,
     name,
     level: top ? top.level + 1 : 0,
     elevation: top ? round(top.elevation + top.height) : 0,
@@ -74,7 +157,8 @@ export function removeFloor(p: Project, floorId: string): Project {
 export function duplicateFloor(p: Project, floorId: string): { project: Project; floorId: string } {
   const src = getFloor(p, floorId);
   if (!src) return { project: p, floorId };
-  const top = p.floors[p.floors.length - 1];
+  const own = floorsOf(p, src.buildingId);
+  const top = own[own.length - 1];
   const copy: Floor = {
     ...src,
     id: newId(),
@@ -276,6 +360,7 @@ function normFloor(raw: unknown, index: number): Floor | null {
   const level = num(f.level, index);
   const floor: Floor = {
     id: f.id,
+    buildingId: str(f.buildingId, ""),
     name: str(f.name, `Floor ${index + 1}`),
     level,
     elevation: num(f.elevation, level * DEFAULT_FLOOR_HEIGHT),
@@ -289,11 +374,48 @@ function normFloor(raw: unknown, index: number): Floor | null {
   return floor;
 }
 
-export function normalizeProject(raw: unknown): Project {
+/** Stable id for the building created when migrating plans made before buildings existed. */
+export const DEFAULT_BUILDING_ID = "main";
+
+function normBuilding(raw: unknown, index: number): Building | null {
+  const b = obj(raw);
+  if (typeof b.id !== "string" || !b.id) return null;
+  return {
+    id: b.id,
+    name: str(b.name, `Building ${index + 1}`),
+    color: typeof b.color === "string" && /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : BUILDING_COLORS[index % BUILDING_COLORS.length],
+    x: num(b.x, 0),
+    y: num(b.y, 0),
+    visible: b.visible !== false,
+  };
+}
+
+export function normalizeProject(raw: unknown, opts: { defaultBuildingName?: string } = {}): Project {
   const r = obj(raw);
+  const buildings = (Array.isArray(r.buildings) ? r.buildings : [])
+    .map(normBuilding)
+    .filter((b): b is Building => !!b)
+    .filter((b, i, all) => all.findIndex((o) => o.id === b.id) === i);
   const floors = sortFloors(
     (Array.isArray(r.floors) ? r.floors : []).map(normFloor).filter((f): f is Floor => !!f),
   );
+  const known = new Set(buildings.map((b) => b.id));
+  const orphans = floors.filter((f) => !known.has(f.buildingId));
+  if (orphans.length) {
+    let home = buildings[0];
+    if (!home) {
+      home = {
+        id: DEFAULT_BUILDING_ID,
+        name: opts.defaultBuildingName ?? "Building 1",
+        color: BUILDING_COLORS[0],
+        x: 0,
+        y: 0,
+        visible: true,
+      };
+      buildings.push(home);
+    }
+    for (const f of orphans) f.buildingId = home.id;
+  }
   const floorIds = new Set(floors.map((f) => f.id));
   const placements: Record<string, Placement> = {};
   for (const [ieee, value] of Object.entries(obj(r.placements))) {
@@ -324,7 +446,7 @@ export function normalizeProject(raw: unknown): Project {
     ),
     autoCalibrate: s.autoCalibrate !== false,
   };
-  return { version: 1, floors, placements, settings };
+  return { version: 1, buildings, floors, placements, settings };
 }
 
 const round = (v: number) => Math.round(v * 1000) / 1000;

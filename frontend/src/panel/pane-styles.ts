@@ -218,6 +218,54 @@ export const paneStyles = css`
     white-space: nowrap;
     flex: 1;
   }
+  .swatches {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    box-shadow: inset 0 0 0 2px var(--zfp-surface);
+  }
+  .swatch.on {
+    border-color: var(--zfp-text);
+  }
+  .building-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
+  .building-card {
+    display: grid;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--zfp-divider);
+    border-left: 4px solid var(--b);
+    transition: opacity 0.15s;
+  }
+  .building-card.hidden {
+    opacity: 0.55;
+  }
+  .b-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .b-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--b);
+    flex: none;
+  }
   .lqi {
     min-width: 28px;
     text-align: center;

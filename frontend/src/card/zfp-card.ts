@@ -1,11 +1,11 @@
 import { css, html, LitElement, nothing, type PropertyValues } from "lit";
 import "../canvas/zfp-canvas";
-import type { Layers, ZfpCanvas } from "../canvas/zfp-canvas";
+import type { Layers, SiteView, ZfpCanvas } from "../canvas/zfp-canvas";
 import { DEVICE_PREFIX } from "../canvas/tools";
 import { FloorplanController } from "../data/controller";
 import type { HomeAssistant } from "../data/hass";
 import { translator, type I18nKey, type Translate } from "../i18n";
-import { getFloor } from "../project/ops";
+import { floorsAtLevel, floorsOf, getFloor, siteLevels } from "../project/ops";
 import { BANDS } from "../rf/colormap";
 import { RfClient } from "../rf/client";
 import type { RfResult } from "../rf/engine";
@@ -19,6 +19,10 @@ export interface CardConfig {
   type: string;
   title?: string;
   floor?: string;
+  /** "site" for all visible buildings, or a building id */
+  building?: string;
+  /** site view level */
+  level?: number;
   height?: number;
   layers?: CardLayer[];
   show_floor_tabs?: boolean;
@@ -35,7 +39,8 @@ export class ZigbeeFloorplanCard extends LitElement {
     _floorId: { state: true },
     _rf: { state: true },
     _detail: { state: true },
-    _imageUrl: { state: true },
+    _imageUrls: { state: true },
+    _level: { state: true },
     _highlight: { state: true },
     _tick: { state: true },
   };
@@ -45,21 +50,24 @@ export class ZigbeeFloorplanCard extends LitElement {
   declare _floorId: string | null;
   declare _rf: RfResult | null;
   declare _detail: string | null;
-  declare _imageUrl: string | null;
+  declare _imageUrls: Record<string, string>;
+  declare _level: number;
   declare _highlight: string | null;
   declare _tick: number;
 
   private ctrl?: FloorplanController;
   private detach?: () => void;
   private rfClient?: RfClient;
-  private imageFor: string | null = null;
+  private readonly imagesRequested = new Set<string>();
+  private siteViewObj: SiteView | null = null;
 
   constructor() {
     super();
     this._floorId = null;
     this._rf = null;
     this._detail = null;
-    this._imageUrl = null;
+    this._imageUrls = {};
+    this._level = 0;
     this._highlight = null;
     this._tick = 0;
   }
@@ -83,6 +91,7 @@ export class ZigbeeFloorplanCard extends LitElement {
     if (config.links && config.links !== "tree" && config.links !== "all") throw new Error("links must be tree or all");
     this._config = config;
     if (config.floor) this._floorId = config.floor;
+    if (typeof config.level === "number") this._level = config.level;
   }
 
   getCardSize(): number {
@@ -133,35 +142,68 @@ export class ZigbeeFloorplanCard extends LitElement {
       this._tick++;
       return;
     }
-    const floors = ctrl.project.floors;
-    if (!floors.find((f) => f.id === this._floorId)) {
+    const floors = this.cardFloors();
+    if (!this.isSite && !floors.find((f) => f.id === this._floorId)) {
       this._floorId = floors.find((f) => f.id === this._config?.floor)?.id ?? floors[0]?.id ?? null;
     }
+    if (this.isSite) {
+      const levels = siteLevels(ctrl.project);
+      if (levels.length && !levels.includes(this._level)) this._level = levels[0];
+    }
     const layers = this.layers();
-    if (this._floorId && this.rfClient && (layers.heatmap || layers.suggestions)) {
+    const floorIds = this.displayedFloorIds();
+    if (floorIds.length && this.rfClient && (layers.heatmap || layers.suggestions)) {
       this.rfClient.request({
         project: ctrl.project,
         devices: (ctrl.network?.devices ?? []).map((d) => ({ ieee: d.ieee, type: d.type })),
         links: ctrl.network?.links ?? [],
-        floorId: this._floorId,
+        floorIds,
         suggest: layers.suggestions,
       });
     }
-    void this.resolveImage();
+    void this.resolveImages();
     this._tick++;
   }
 
-  private async resolveImage(): Promise<void> {
-    const id = getFloor(this.ctrl!.project, this._floorId)?.background?.imageId ?? null;
-    if (id === this.imageFor) return;
-    this.imageFor = id;
-    this._imageUrl = null;
-    if (!id || !this.layers().background) return;
-    try {
-      const url = await this.ctrl!.api.imageUrl(id);
-      if (this.imageFor === id) this._imageUrl = url;
-    } catch {
-      /* image missing */
+  private get isSite(): boolean {
+    return this._config?.building === "site";
+  }
+
+  /** Floors this card can switch between (the configured or first building's). */
+  private cardFloors() {
+    const p = this.ctrl!.project;
+    const configured = this._config?.building;
+    const buildingId =
+      configured && configured !== "site" && p.buildings.some((b) => b.id === configured)
+        ? configured
+        : (getFloor(p, this._config?.floor)?.buildingId ?? getFloor(p, this._floorId)?.buildingId ?? p.buildings[0]?.id);
+    return floorsOf(p, buildingId);
+  }
+
+  private displayedFloorIds(): string[] {
+    if (!this.ctrl?.ready) return [];
+    if (this.isSite) return floorsAtLevel(this.ctrl.project, this._level).map((f) => f.id);
+    return this._floorId ? [this._floorId] : [];
+  }
+
+  private get siteView(): SiteView | null {
+    if (!this.isSite) return (this.siteViewObj = null);
+    if (this.siteViewObj?.level !== this._level) this.siteViewObj = { level: this._level };
+    return this.siteViewObj;
+  }
+
+  private async resolveImages(): Promise<void> {
+    if (!this.layers().background) return;
+    for (const id of this.displayedFloorIds()) {
+      const imageId = getFloor(this.ctrl!.project, id)?.background?.imageId;
+      if (!imageId || this.imagesRequested.has(imageId)) continue;
+      this.imagesRequested.add(imageId);
+      try {
+        const url = await this.ctrl!.api.imageUrl(imageId);
+        this._imageUrls = { ...this._imageUrls, [imageId]: url };
+      } catch {
+        this.imagesRequested.delete(imageId);
+      }
     }
   }
 
@@ -175,9 +217,11 @@ export class ZigbeeFloorplanCard extends LitElement {
     const t = this.t;
     const ctrl = this.ctrl;
     const height = this._config.height ?? 420;
-    const floors = ctrl?.ready ? ctrl.project.floors : [];
+    const floors = ctrl?.ready ? this.cardFloors() : [];
+    const levels = ctrl?.ready && this.isSite ? siteLevels(ctrl.project) : [];
     const floor = ctrl?.ready ? getFloor(ctrl.project, this._floorId) : undefined;
-    const showTabs = (this._config.show_floor_tabs ?? true) && floors.length > 1;
+    const hasView = this.isSite ? !!ctrl?.ready && ctrl.project.buildings.some((b) => b.visible) : !!floor;
+    const showTabs = (this._config.show_floor_tabs ?? true) && (this.isSite ? levels.length > 1 : floors.length > 1);
     const detailDevice = this._detail ? ctrl?.network?.devices.find((d) => d.ieee === this._detail) : undefined;
     const layers = this.layers();
     return html`<ha-card>
@@ -185,20 +229,28 @@ export class ZigbeeFloorplanCard extends LitElement {
         ? html`<div class="head">
             ${this._config.title ? html`<div class="title">${this._config.title}</div>` : nothing}
             ${showTabs
-              ? html`<div class="tabs">${floors.map(
-                  (f) => html`<button class=${f.id === this._floorId ? "active" : ""} @click=${() => {
-                    this._floorId = f.id;
-                    this._detail = null;
-                    this.onChange();
-                  }}>${f.name}</button>`,
-                )}</div>`
+              ? html`<div class="tabs">${this.isSite
+                  ? levels.map(
+                      (level) => html`<button class=${level === this._level ? "active" : ""} @click=${() => {
+                        this._level = level;
+                        this._detail = null;
+                        this.onChange();
+                      }}>${t("site.level", { n: level })}</button>`,
+                    )
+                  : floors.map(
+                      (f) => html`<button class=${f.id === this._floorId ? "active" : ""} @click=${() => {
+                        this._floorId = f.id;
+                        this._detail = null;
+                        this.onChange();
+                      }}>${f.name}</button>`,
+                    )}</div>`
               : nothing}
           </div>`
         : nothing}
       <div class="stage" style="height:${height}px">
         ${!ctrl?.ready
           ? html`<div class="msg">${ctrl?.loadError ?? html`<div class="spinner"></div>`}</div>`
-          : !floor
+          : !hasView
             ? html`<div class="msg">${icon(mdiFloorPlan, 36)}<span>${t("card.no_plan")}</span></div>`
             : html`<zfp-canvas
                   .project=${ctrl.project}
@@ -209,7 +261,8 @@ export class ZigbeeFloorplanCard extends LitElement {
                   .layers=${layers}
                   .linkMode=${this._config.links ?? "tree"}
                   .selection=${this._detail ? [DEVICE_PREFIX + this._detail] : []}
-                  .imageUrl=${this._imageUrl}
+                  .imageUrls=${this._imageUrls}
+                  .site=${this.siteView}
                   .highlight=${this._highlight}
                   .t=${t}
                   @zfp-device-click=${(e: CustomEvent<{ ieee: string }>) => (this._detail = e.detail.ieee)}

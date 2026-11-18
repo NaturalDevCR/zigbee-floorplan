@@ -46,11 +46,33 @@ interface FloorInfo {
   floor: Floor;
   order: number;
   grid: WallGrid;
+  buildingId: string;
+  /** offset from the floor's local coordinates to site coordinates */
+  offset: Pt;
 }
 
+const shift = (p: Pt, o: Pt): Pt => ({ x: p.x + o.x, y: p.y + o.y });
+
+/** Copy of a floor with its geometry moved into site coordinates. */
+function toSite(floor: Floor, o: Pt): Floor {
+  if (!o.x && !o.y) return floor;
+  return {
+    ...floor,
+    walls: floor.walls.map((w) => ({ ...w, a: shift(w.a, o), b: shift(w.b, o) })),
+    rooms: floor.rooms.map((r) => ({ ...r, points: r.points.map((pt) => shift(pt, o)) })),
+  };
+}
+
+/**
+ * Everything is computed in site coordinates: each building's floors are
+ * offset by the building position, so buildings shadow each other through
+ * their exterior walls. Slabs only attenuate between floors of the same
+ * building.
+ */
 export class RfScene {
   readonly floors = new Map<string, FloorInfo>();
-  readonly sorted: Floor[];
+  /** floors of each building, lowest level first */
+  private readonly stacks = new Map<string, Floor[]>();
   /** every placed device that exists in the network */
   readonly nodes = new Map<string, Node3>();
   /** routers + coordinator */
@@ -59,24 +81,39 @@ export class RfScene {
 
   constructor(project: Project, deviceTypes: Map<string, DeviceType>) {
     this.settings = project.settings;
-    this.sorted = [...project.floors].sort((a, b) => a.level - b.level);
-    this.sorted.forEach((floor, order) => {
-      this.floors.set(floor.id, { floor, order, grid: new WallGrid(floor.walls, 1) });
-    });
+    const offsets = new Map((project.buildings ?? []).map((b) => [b.id, { x: b.x, y: b.y }]));
+    for (const floor of [...project.floors].sort((a, b) => a.level - b.level)) {
+      const stack = this.stacks.get(floor.buildingId) ?? [];
+      stack.push(floor);
+      this.stacks.set(floor.buildingId, stack);
+    }
+    for (const [buildingId, stack] of this.stacks) {
+      const offset = offsets.get(buildingId) ?? { x: 0, y: 0 };
+      stack.forEach((raw, order) => {
+        const floor = toSite(raw, offset);
+        this.floors.set(raw.id, { floor, order, grid: new WallGrid(floor.walls, 1), buildingId, offset });
+      });
+    }
     for (const [ieee, pl] of Object.entries(project.placements)) {
       const type = deviceTypes.get(ieee);
-      if (!type || !this.floors.has(pl.floorId)) continue;
+      const info = this.floors.get(pl.floorId);
+      if (!type || !info) continue;
       const node: Node3 = {
         ieee,
         type,
         floorId: pl.floorId,
-        pos: { x: pl.x, y: pl.y },
+        pos: shift(pl, info.offset),
         height: pl.height ?? RX_HEIGHT,
         tx: pl.txPower ?? txDefault(this.settings, type),
       };
       this.nodes.set(ieee, node);
       if (type === "Coordinator" || type === "Router") this.emitters.push(node);
     }
+  }
+
+  /** Offset that turns a floor's local coordinates into site coordinates. */
+  offsetOf(floorId: string): Pt {
+    return this.floors.get(floorId)?.offset ?? { x: 0, y: 0 };
   }
 
   absZ(floorId: string, height: number): number {
@@ -92,9 +129,12 @@ export class RfScene {
     for (const w of b.grid.crossed(from, to)) loss += materialDb(this.settings, w.material);
     if (a !== b) {
       for (const w of a.grid.crossed(from, to)) loss += materialDb(this.settings, w.material);
-      const lo = Math.min(a.order, b.order);
-      const hi = Math.max(a.order, b.order);
-      for (let i = lo + 1; i <= hi; i++) loss += materialDb(this.settings, this.sorted[i].slab);
+      if (a.buildingId === b.buildingId) {
+        const stack = this.stacks.get(a.buildingId)!;
+        const lo = Math.min(a.order, b.order);
+        const hi = Math.max(a.order, b.order);
+        for (let i = lo + 1; i <= hi; i++) loss += materialDb(this.settings, stack[i].slab);
+      }
     }
     return loss;
   }

@@ -1,6 +1,6 @@
 import { css, html, LitElement, nothing, type PropertyValues, type TemplateResult } from "lit";
 import "../canvas/zfp-canvas";
-import { DEFAULT_LAYERS, type Layers, type ZfpCanvas } from "../canvas/zfp-canvas";
+import { DEFAULT_LAYERS, type Layers, type SiteView, type ZfpCanvas } from "../canvas/zfp-canvas";
 import { DEVICE_PREFIX, type ToolId } from "../canvas/tools";
 import { prepareImage } from "../data/api";
 import { FloorplanController, type Notice } from "../data/controller";
@@ -9,10 +9,17 @@ import { dist } from "../geometry";
 import { relativeTime, translator, type I18nKey, type Translate } from "../i18n";
 import { WALL_MATERIALS, materialDb } from "../materials";
 import {
+  addBuilding,
   addFloor,
   duplicateFloor,
+  floorsAtLevel,
+  floorsOf,
+  getBuilding,
   getFloor,
+  removeBuilding,
   removeFloor,
+  siteLevels,
+  updateBuilding,
   setBackground,
   unplaceDevice,
   updateFloor,
@@ -29,6 +36,8 @@ import "../ui/dialog";
 import type { ZfpDialog } from "../ui/dialog";
 import {
   icon,
+  mdiCheck,
+  mdiChevronDown,
   mdiChevronRight,
   mdiCursorDefaultOutline,
   mdiDevices,
@@ -54,6 +63,9 @@ import {
   mdiVectorPolygon,
   mdiWall,
   mdiEyeOutline,
+  mdiEyeOffOutline,
+  mdiMapOutline,
+  mdiOfficeBuildingOutline,
   mdiAlertOutline,
   mdiSync,
 } from "../ui/icons";
@@ -63,6 +75,7 @@ import "../ui/toast";
 import type { ZfpToast } from "../ui/toast";
 import { paneStyles } from "./pane-styles";
 import {
+  renderBuildingsPane,
   renderCoveragePane,
   renderDevicesPane,
   renderFloorPane,
@@ -70,7 +83,7 @@ import {
   type PaneContext,
 } from "./panes";
 
-type Tab = "inspector" | "devices" | "coverage" | "floor";
+type Tab = "inspector" | "devices" | "coverage" | "floor" | "buildings";
 const GRID_SIZES = [0.05, 0.1, 0.25, 0.5];
 const PREFS_KEY = "zigbee-floorplan:prefs";
 
@@ -81,6 +94,7 @@ interface Prefs {
   wallThickness: number;
   gridSize: number;
   mode: "view" | "edit";
+  view?: { site: boolean; buildingId: string | null; floorId: string | null; level: number };
 }
 
 function loadPrefs(): Partial<Prefs> {
@@ -113,7 +127,11 @@ export class ZigbeeFloorplanPanel extends LitElement {
     _tab: { state: true },
     _drawer: { state: true },
     _rf: { state: true },
-    _imageUrl: { state: true },
+    _imageUrls: { state: true },
+    _site: { state: true },
+    _buildingId: { state: true },
+    _level: { state: true },
+    _buildingMenu: { state: true },
     _wallMaterial: { state: true },
     _wallThickness: { state: true },
     _gridSize: { state: true },
@@ -136,7 +154,12 @@ export class ZigbeeFloorplanPanel extends LitElement {
   declare _tab: Tab;
   declare _drawer: boolean;
   declare _rf: RfResult | null;
-  declare _imageUrl: string | null;
+  declare _imageUrls: Record<string, string>;
+  /** site view (all visible buildings) instead of one building's floor */
+  declare _site: boolean;
+  declare _buildingId: string | null;
+  declare _level: number;
+  declare _buildingMenu: boolean;
   declare _wallMaterial: MaterialId;
   declare _wallThickness: number;
   declare _gridSize: number;
@@ -150,13 +173,18 @@ export class ZigbeeFloorplanPanel extends LitElement {
   private detach?: () => void;
   private unNotice?: () => void;
   private rfClient?: RfClient;
-  private imageFor: string | null = null;
+  private readonly imagesRequested = new Set<string>();
+  private siteViewObj: SiteView | null = null;
 
   constructor() {
     super();
     const prefs = loadPrefs();
     this.narrow = false;
-    this._floorId = null;
+    this._floorId = prefs.view?.floorId ?? null;
+    this._buildingId = prefs.view?.buildingId ?? null;
+    this._site = prefs.view?.site ?? false;
+    this._level = prefs.view?.level ?? 0;
+    this._buildingMenu = false;
     this._mode = prefs.mode ?? "view";
     this._tool = "select";
     this._layers = { ...DEFAULT_LAYERS, ...prefs.layers };
@@ -166,7 +194,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
     this._tab = "devices";
     this._drawer = true;
     this._rf = null;
-    this._imageUrl = null;
+    this._imageUrls = {};
     this._wallMaterial = prefs.wallMaterial ?? "brick";
     this._wallThickness = prefs.wallThickness ?? 0.15;
     this._gridSize = prefs.gridSize ?? 0.25;
@@ -236,8 +264,17 @@ export class ZigbeeFloorplanPanel extends LitElement {
 
   private onControllerChange(): void {
     const ctrl = this.ctrl!;
-    const floors = ctrl.project.floors;
-    if (!floors.find((f) => f.id === this._floorId)) this._floorId = floors[0]?.id ?? null;
+    const p = ctrl.project;
+    if (!p.buildings.find((b) => b.id === this._buildingId)) {
+      this._buildingId = getFloor(p, this._floorId)?.buildingId ?? p.buildings[0]?.id ?? null;
+    }
+    const own = floorsOf(p, this._buildingId);
+    if (!own.find((f) => f.id === this._floorId)) this._floorId = own[0]?.id ?? null;
+    if (this._site) {
+      const levels = siteLevels(p);
+      if (!p.buildings.length) this._site = false;
+      else if (levels.length && !levels.includes(this._level)) this._level = levels[0];
+    }
     // only downgrade once permissions are known, so a remembered Edit mode survives loading
     if (ctrl.info && !ctrl.info.is_admin && this._mode === "edit") this._mode = "view";
     const valid = new Set([
@@ -247,34 +284,49 @@ export class ZigbeeFloorplanPanel extends LitElement {
     ]);
     if (this._selection.some((s) => !valid.has(s))) this._selection = this._selection.filter((s) => valid.has(s));
     this.requestRf();
-    void this.resolveImage();
+    void this.resolveImages();
     this._tick++;
+  }
+
+  /** Floors drawn right now: the selected floor, or one per visible building in site view. */
+  private displayedFloorIds(): string[] {
+    if (!this.ctrl?.ready) return [];
+    if (this._site) return floorsAtLevel(this.project, this._level).map((f) => f.id);
+    return this._floorId ? [this._floorId] : [];
+  }
+
+  private get siteView(): SiteView | null {
+    if (!this._site) return (this.siteViewObj = null);
+    // stable identity: the canvas keeps a viewport per view and compares by reference
+    if (this.siteViewObj?.level !== this._level) this.siteViewObj = { level: this._level };
+    return this.siteViewObj;
   }
 
   private requestRf(): void {
     const ctrl = this.ctrl;
-    if (!ctrl?.ready || !this._floorId || !this.rfClient) return;
+    const floorIds = this.displayedFloorIds();
+    if (!ctrl?.ready || !floorIds.length || !this.rfClient) return;
     const network = ctrl.network;
     this.rfClient.request({
       project: ctrl.project,
       devices: (network?.devices ?? []).map((d) => ({ ieee: d.ieee, type: d.type })),
       links: network?.links ?? [],
-      floorId: this._floorId,
+      floorIds,
       suggest: true,
     });
   }
 
-  private async resolveImage(): Promise<void> {
-    const id = getFloor(this.ctrl!.project, this._floorId)?.background?.imageId ?? null;
-    if (id === this.imageFor) return;
-    this.imageFor = id;
-    this._imageUrl = null;
-    if (!id) return;
-    try {
-      const url = await this.ctrl!.api.imageUrl(id);
-      if (this.imageFor === id) this._imageUrl = url;
-    } catch {
-      /* missing image: plan still renders */
+  private async resolveImages(): Promise<void> {
+    for (const id of this.displayedFloorIds()) {
+      const imageId = getFloor(this.project, id)?.background?.imageId;
+      if (!imageId || this.imagesRequested.has(imageId)) continue;
+      this.imagesRequested.add(imageId);
+      try {
+        const url = await this.ctrl!.api.imageUrl(imageId);
+        this._imageUrls = { ...this._imageUrls, [imageId]: url };
+      } catch {
+        this.imagesRequested.delete(imageId);
+      }
     }
   }
 
@@ -326,6 +378,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
       wallThickness: this._wallThickness,
       gridSize: this._gridSize,
       mode: this._mode,
+      view: { site: this._site, buildingId: this._buildingId, floorId: this._floorId, level: this._level },
     });
   }
 
@@ -336,13 +389,85 @@ export class ZigbeeFloorplanPanel extends LitElement {
   };
 
   private setFloor(id: string): void {
-    if (id === this._floorId) return;
+    const floor = getFloor(this.project, id);
+    if (!floor || (id === this._floorId && !this._site)) return;
     this._floorId = id;
+    this._buildingId = floor.buildingId;
+    this._site = false;
     this._selection = [];
     this._placing = null;
     if (this._tool === "calibrate" || this._tool === "image") this._tool = "select";
+    if (this._tab === "buildings") this._tab = "floor";
+    this.afterViewChange();
+  }
+
+  private setBuilding(id: string): void {
+    this._buildingMenu = false;
+    const floor = floorsOf(this.project, id).find((f) => f.level === getFloor(this.project, this._floorId)?.level) ??
+      floorsOf(this.project, id)[0];
+    this._buildingId = id;
+    if (floor) this.setFloor(floor.id);
+    else {
+      this._site = false;
+      this._floorId = null;
+      this.afterViewChange();
+    }
+  }
+
+  private setSite(level?: number): void {
+    this._buildingMenu = false;
+    const levels = siteLevels(this.project);
+    const wanted = level ?? getFloor(this.project, this._floorId)?.level ?? this._level;
+    this._level = levels.includes(wanted) ? wanted : (levels[0] ?? 0);
+    this._site = true;
+    this._selection = [];
+    this._placing = null;
+    this._tool = "select";
+    if (this._tab === "floor") this._tab = "buildings";
+    this.afterViewChange();
+  }
+
+  private afterViewChange(): void {
+    this.persistPrefs();
     this.requestRf();
-    void this.resolveImage();
+    void this.resolveImages();
+  }
+
+  private async addBuilding(): Promise<void> {
+    this._buildingMenu = false;
+    const t = this.t;
+    const n = this.project.buildings.length + 1;
+    let floorId = "";
+    this.edit((p) => {
+      const b = addBuilding(p, t("building.default_name", { n }));
+      const f = addFloor(b.project, t("floor.ground"), b.buildingId);
+      floorId = f.floorId;
+      return f.project;
+    });
+    if (floorId) this.startDrawing(floorId);
+  }
+
+  private startDrawing(floorId: string): void {
+    this.setFloor(floorId);
+    this._mode = "edit";
+    this._tool = "wall";
+    this._tab = "floor";
+    this._drawer = !this.narrow;
+    this.persistPrefs();
+  }
+
+  private async deleteBuilding(id: string): Promise<void> {
+    const b = getBuilding(this.project, id);
+    if (!b) return;
+    const t = this.t;
+    const ok = await this.dialog.confirm({
+      title: t("action.delete"),
+      message: t("building.delete_confirm", { name: b.name }),
+      confirmText: t("action.delete"),
+      cancelText: t("action.cancel"),
+      danger: true,
+    });
+    if (ok) this.edit((p) => removeBuilding(p, id));
   }
 
   private setMode(mode: "view" | "edit"): void {
@@ -365,22 +490,20 @@ export class ZigbeeFloorplanPanel extends LitElement {
 
   private async addFloor(): Promise<void> {
     const t = this.t;
-    const n = this.project.floors.length;
+    if (!this.project.buildings.length) {
+      await this.addBuilding();
+      return;
+    }
+    const buildingId = this._buildingId ?? this.project.buildings[0].id;
+    const n = floorsOf(this.project, buildingId).length;
     const name = n === 0 ? t("floor.ground") : t("floor.default_name", { n });
     let id = "";
     this.edit((p) => {
-      const res = addFloor(p, name);
+      const res = addFloor(p, name, buildingId);
       id = res.floorId;
       return res.project;
     });
-    if (id) {
-      this.setFloor(id);
-      this._mode = "edit";
-      this.persistPrefs();
-      this._tool = "wall";
-      this._tab = "floor";
-      this._drawer = !this.narrow;
-    }
+    if (id) this.startDrawing(id);
   }
 
   private async deleteFloor(): Promise<void> {
@@ -520,20 +643,25 @@ export class ZigbeeFloorplanPanel extends LitElement {
     input.click();
   }
 
+  private isDisplayed(ieee: string): boolean {
+    const pl = this.project.placements[ieee];
+    return !!pl && this.displayedFloorIds().includes(pl.floorId);
+  }
+
   private openDevice(ieee: string): void {
+    const pl = this.project.placements[ieee];
+    if (pl && !this.isDisplayed(ieee)) this.setFloor(pl.floorId);
     this._selection = [DEVICE_PREFIX + ieee];
     this._tab = "inspector";
     this._drawer = true;
-    const pl = this.project.placements[ieee];
-    if (pl && pl.floorId !== this._floorId) this.setFloor(pl.floorId);
   }
 
   private locate(ieee: string): void {
     const pl = this.project.placements[ieee];
     if (!pl) return;
-    if (pl.floorId !== this._floorId) this.setFloor(pl.floorId);
+    if (!this.isDisplayed(ieee)) this.setFloor(pl.floorId);
     this._highlight = ieee;
-    this.updateComplete.then(() => this.canvas?.centerOn(pl));
+    this.updateComplete.then(() => this.canvas?.centerOnDevice(ieee));
     setTimeout(() => {
       if (this._highlight === ieee) this._highlight = null;
     }, 2400);
@@ -596,17 +724,18 @@ export class ZigbeeFloorplanPanel extends LitElement {
         <div class="center-msg">${icon(mdiAlertOutline, 40)}<p>${t("banner.not_loaded")}</p><p class="muted">${ctrl.loadError}</p></div></div>`;
     }
     const floor = getFloor(this.project, this._floorId);
-    const editing = this.canEdit;
-    const showDrawer = this._drawer && !!floor;
+    const hasView = this._site ? this.project.buildings.length > 0 : !!floor;
+    const railed = this.canEdit && !!floor && !this._site;
+    const showDrawer = this._drawer && hasView;
     return html`
       <div class="app ${this.narrow ? "narrow" : ""}">
         ${this.renderHeader()}
         ${this.renderUpdateBar()}
-        <div class="body ${showDrawer ? "with-drawer" : ""} ${editing ? "editing" : ""}">
-          ${editing && floor ? this.renderRail() : nothing}
+        <div class="body ${showDrawer ? "with-drawer" : ""} ${railed ? "editing" : ""}">
+          ${railed ? this.renderRail() : nothing}
           <main class="stage">
-            ${floor ? this.renderCanvas() : this.renderEmpty()}
-            ${floor ? this.renderOverlays() : nothing}
+            ${hasView ? this.renderCanvas() : this.renderEmpty()}
+            ${hasView ? this.renderOverlays() : nothing}
           </main>
           ${showDrawer ? this.renderDrawer() : nothing}
         </div>
@@ -619,7 +748,9 @@ export class ZigbeeFloorplanPanel extends LitElement {
   private renderHeader(): TemplateResult {
     const t = this.t;
     const ctrl = this.ctrl;
-    const floors = ctrl?.ready ? this.project.floors : [];
+    const ready = !!ctrl?.ready;
+    const floors = ready ? floorsOf(this.project, this._buildingId) : [];
+    const anyFloor = ready && this.project.floors.length > 0;
     const scan = ctrl?.network?.scan;
     const scanning = scan?.status === "scanning";
     const isAdmin = !!ctrl?.info?.is_admin;
@@ -630,9 +761,16 @@ export class ZigbeeFloorplanPanel extends LitElement {
             ${icon(mdiMenu)}</button>`
         : nothing}
       <div class="brand">${icon(mdiFloorPlan, 22)}<span>${t("app.title")}</span></div>
+      ${ready && this.project.buildings.length ? this.renderBuildingSwitcher() : nothing}
       <nav class="floors" role="tablist">
-        ${floors.map(
-          (f) => html`<button role="tab" class="floor-tab ${f.id === this._floorId ? "active" : ""}"
+        ${this._site
+          ? siteLevels(this.project).map(
+              (level) => html`<button role="tab" class="floor-tab ${level === this._level ? "active" : ""}"
+                aria-selected=${level === this._level} @click=${() => this.setSite(level)}>
+                ${icon(mdiStairs, 16)}<span>${t("site.level", { n: level })}</span></button>`,
+            )
+          : floors.map(
+          (f) => html`<button role="tab" class="floor-tab ${f.id === this._floorId && !this._site ? "active" : ""}"
             aria-selected=${f.id === this._floorId}
             @click=${() => this.setFloor(f.id)}
             @dblclick=${() => {
@@ -643,7 +781,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
             }}>
             ${icon(mdiStairs, 16)}<span>${f.name}</span></button>`,
         )}
-        ${this.canEdit || (isAdmin && floors.length === 0)
+        ${!this._site && ready && (this.canEdit || (isAdmin && !anyFloor))
           ? html`<button class="floor-tab add" @click=${() => this.addFloor()} title=${t("action.add_floor")}>
               ${icon(mdiPlus, 16)}${floors.length ? nothing : html`<span>${t("action.add_floor")}</span>`}</button>`
           : nothing}
@@ -656,7 +794,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
             <span class=${scanning ? "spin" : ""}>${icon(scanning ? mdiSync : mdiRadar, 18)}</span>
             <span class="label">${scanning ? t("action.scanning") : t("action.scan")}</span></button>`
         : nothing}
-      ${ctrl?.ready && isAdmin && floors.length
+      ${ctrl?.ready && isAdmin && anyFloor
         ? html`<div class="segmented on-header" role="radiogroup">
             <button class=${this._mode === "view" ? "active" : ""} @click=${() => this.setMode("view")}>
               ${icon(mdiEyeOutline, 16)}<span class="label">${t("mode.view")}</span></button>
@@ -678,6 +816,54 @@ export class ZigbeeFloorplanPanel extends LitElement {
           </div>`
         : nothing}
     </header>`;
+  }
+
+  private renderBuildingSwitcher(): TemplateResult {
+    const t = this.t;
+    const p = this.project;
+    const current = getBuilding(p, this._buildingId);
+    const multi = p.buildings.length > 1;
+    const label = this._site ? t("site.all") : (current?.name ?? "");
+    return html`<div class="menu-wrap building-switch">
+      <button class="building-btn on-header" @click=${() => (this._buildingMenu = !this._buildingMenu)}
+        aria-haspopup="menu" aria-expanded=${this._buildingMenu}>
+        ${this._site
+          ? icon(mdiMapOutline, 18)
+          : html`<span class="b-dot" style="background:${current?.color ?? "currentColor"}"></span>`}
+        <span class="label">${label}</span>${icon(mdiChevronDown, 16)}
+      </button>
+      ${this._buildingMenu
+        ? html`<div class="scrim" @click=${() => (this._buildingMenu = false)}></div>
+            <div class="menu building-menu" role="menu">
+              ${multi
+                ? html`<button role="menuitem" class=${this._site ? "current" : ""} @click=${() => this.setSite()}>
+                    ${icon(mdiMapOutline, 18)}<span class="grow">${t("site.all")}</span>
+                    ${this._site ? icon(mdiCheck, 16) : nothing}</button>
+                    <div class="menu-sep"></div>`
+                : nothing}
+              ${p.buildings.map(
+                (b) => html`<div class="menu-row ${!this._site && b.id === this._buildingId ? "current" : ""}">
+                  <button role="menuitem" class="grow-btn" @click=${() => this.setBuilding(b.id)}>
+                    <span class="b-dot" style="background:${b.color}"></span>
+                    <span class="grow">${b.name}</span>
+                    <span class="muted small">${floorsOf(p, b.id).length}</span>
+                  </button>
+                  ${multi
+                    ? html`<button class="icon-btn" ?disabled=${!this.ctrl?.canEdit}
+                        title=${b.visible ? t("site.hide") : t("site.show")}
+                        @click=${() => this.edit((pr) => updateBuilding(pr, b.id, { visible: !b.visible }))}>
+                        ${icon(b.visible ? mdiEyeOutline : mdiEyeOffOutline, 18)}</button>`
+                    : nothing}
+                </div>`,
+              )}
+              ${this.ctrl?.canEdit
+                ? html`<div class="menu-sep"></div>
+                    <button role="menuitem" @click=${() => this.addBuilding()}>
+                      ${icon(mdiPlus, 18)}<span class="grow">${t("building.add")}</span></button>`
+                : nothing}
+            </div>`
+        : nothing}
+    </div>`;
   }
 
   private renderSaveState(): TemplateResult | typeof nothing {
@@ -728,7 +914,8 @@ export class ZigbeeFloorplanPanel extends LitElement {
       .linkMode=${this._linkMode}
       .selection=${this._selection}
       .placing=${this._placing}
-      .imageUrl=${this._imageUrl}
+      .imageUrls=${this._imageUrls}
+      .site=${this.siteView}
       .t=${this.t}
       .wallMaterial=${this._wallMaterial}
       .wallThickness=${this._wallThickness}
@@ -744,6 +931,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
       @zfp-device-click=${(e: CustomEvent<{ ieee: string }>) => this.openDevice(e.detail.ieee)}
       @zfp-placed=${() => (this._placing = null)}
       @zfp-calibrate=${this.onCalibrate}
+      @zfp-open-building=${(e: CustomEvent<{ id: string }>) => this.setBuilding(e.detail.id)}
     ></zfp-canvas>`;
   }
 
@@ -763,14 +951,18 @@ export class ZigbeeFloorplanPanel extends LitElement {
     const hint = this._placing
       ? t("hint.place", { name: net?.devices.find((d) => d.ieee === this._placing)?.name ?? "" })
       : this.canEdit
-        ? t(`hint.${this._tool === "image" ? "pan" : this._tool}` as I18nKey)
+        ? this._site
+          ? t("hint.site")
+          : t(`hint.${this._tool === "image" ? "pan" : this._tool}` as I18nKey)
         : null;
     return html`
       <div class="top-left">
         <button class="fab ${this._layersOpen ? "active" : ""}" @click=${() => (this._layersOpen = !this._layersOpen)}>
           ${icon(mdiLayersOutline, 18)}<span>${t("layers.title")}</span></button>
         ${this._layersOpen ? this.renderLayers() : nothing}
-        ${this.canEdit && (this._tool === "wall" || this._tool === "room" || this._tool === "select") ? this.renderToolOptions() : nothing}
+        ${this.canEdit && !this._site && (this._tool === "wall" || this._tool === "room" || this._tool === "select")
+          ? this.renderToolOptions()
+          : nothing}
       </div>
       <div class="banners">${banners}</div>
       <div class="zoom">
@@ -849,7 +1041,10 @@ export class ZigbeeFloorplanPanel extends LitElement {
         <div class="empty-art">${icon(mdiFloorPlan, 56)}</div>
         <h2>${t("empty.title")}</h2>
         <p>${admin ? t("empty.body") : t("empty.readonly")}</p>
-        ${admin ? html`<button class="btn primary big" @click=${() => this.addFloor()}>${icon(mdiPlus, 18)} ${t("empty.cta")}</button>` : nothing}
+        ${admin
+          ? html`<button class="btn primary big" @click=${() => this.addFloor()}>${icon(mdiPlus, 18)}
+              ${this.project.buildings.length ? t("action.add_floor") : t("empty.cta")}</button>`
+          : nothing}
       </div>
     </div>`;
   }
@@ -866,6 +1061,13 @@ export class ZigbeeFloorplanPanel extends LitElement {
       selection: this._selection,
       canEdit: this.canEdit,
       canSwitchToEdit: !!this.ctrl?.canEdit && this._mode === "view",
+      site: this._site,
+      displayedFloorIds: this.displayedFloorIds(),
+      building: getBuilding(this.project, floor?.buildingId ?? this._buildingId),
+      editBuilding: (id, patch) => this.edit((p) => updateBuilding(p, id, patch)),
+      deleteBuilding: (id) => void this.deleteBuilding(id),
+      openBuilding: (id) => this.setBuilding(id),
+      addBuilding: () => void this.addBuilding(),
       search: this._search,
       activeTool: this._tool,
       edit: this.edit,
@@ -883,8 +1085,9 @@ export class ZigbeeFloorplanPanel extends LitElement {
       unplace: (ieee) => this.edit((p) => unplaceDevice(p, ieee)),
       highlight: (ieee) => (this._highlight = ieee),
       locateSuggestion: (i) => {
-        const s = this._rf?.suggestions[i];
-        if (s) this.canvas?.centerOn(s.pos);
+        const shown = this.displayedFloorIds();
+        const s = (this._rf?.suggestions ?? []).filter((x) => shown.includes(x.floorId))[i];
+        if (s) this.canvas?.centerOnSite(s.pos);
       },
       uploadImage: () => this.uploadImage(),
       removeImage: () => this.edit((p) => setBackground(p, fid, undefined)),
@@ -902,7 +1105,8 @@ export class ZigbeeFloorplanPanel extends LitElement {
       ["devices", "tab.devices", mdiDevices],
       ["coverage", "tab.coverage", mdiSignal],
     ];
-    if (this.canEdit) tabs.push(["floor", "tab.floor", mdiStairs]);
+    if (this._site) tabs.push(["buildings", "tab.buildings", mdiOfficeBuildingOutline]);
+    else if (this.canEdit) tabs.push(["floor", "tab.floor", mdiStairs]);
     const tab = tabs.some(([id]) => id === this._tab) ? this._tab : "devices";
     return html`<aside class="drawer"
       @zfp-locate=${(e: CustomEvent<{ ieee: string }>) => this.locate(e.detail.ieee)}
@@ -924,6 +1128,7 @@ export class ZigbeeFloorplanPanel extends LitElement {
         ${tab === "devices" ? renderDevicesPane(ctx) : nothing}
         ${tab === "coverage" ? renderCoveragePane(ctx) : nothing}
         ${tab === "floor" ? renderFloorPane(ctx) : nothing}
+        ${tab === "buildings" ? renderBuildingsPane(ctx) : nothing}
       </div>
     </aside>`;
   }
@@ -1151,6 +1356,68 @@ export class ZigbeeFloorplanPanel extends LitElement {
       }
       .menu button:hover {
         background: var(--zfp-surface-2);
+      }
+      .building-switch {
+        margin-left: 8px;
+      }
+      .building-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0 10px 0 12px;
+        border-radius: 18px;
+        border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+        background: transparent;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        white-space: nowrap;
+        max-width: 240px;
+      }
+      .building-btn .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .building-btn:hover {
+        background: color-mix(in srgb, currentColor 10%, transparent);
+      }
+      .b-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex: none;
+      }
+      .building-menu {
+        left: 0;
+        right: auto;
+        min-width: 260px;
+      }
+      .menu .grow {
+        flex: 1;
+      }
+      .menu .current {
+        color: var(--zfp-accent);
+      }
+      .menu-row {
+        display: flex;
+        align-items: center;
+        border-radius: 8px;
+      }
+      .menu-row.current {
+        background: var(--zfp-accent-soft);
+      }
+      .menu-row .grow-btn {
+        flex: 1;
+        min-width: 0;
+      }
+      .menu-sep {
+        height: 1px;
+        background: var(--zfp-divider);
+        margin: 4px 6px;
+      }
+      .small {
+        font-size: 12px;
       }
       @keyframes drop {
         from {

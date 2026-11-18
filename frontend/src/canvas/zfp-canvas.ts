@@ -5,7 +5,8 @@ import type { I18nKey, Translate } from "../i18n";
 import { MATERIALS } from "../materials";
 import type { RfResult } from "../rf/engine";
 import type { Suggestion } from "../rf/suggest";
-import type { Floor, MaterialId, NetworkState, Project, Pt, ZDevice, ZLink } from "../types";
+import { buildingExtent, floorsOf, updateBuilding } from "../project/ops";
+import type { Building, Floor, MaterialId, NetworkState, Project, Pt, ZDevice, ZLink } from "../types";
 import {
   deviceHealth,
   HEALTH_COLOR,
@@ -41,6 +42,21 @@ export const DEFAULT_LAYERS: Layers = { heatmap: true, links: true, labels: true
 
 export const DEVICE_DRAG_TYPE = "application/x-zigbee-floorplan-device";
 
+/** Site view: every visible building, showing its floor at `level`. */
+export interface SiteView {
+  level: number;
+}
+
+/** A floor drawn in the current view, offset from its local coordinates. */
+interface ViewLayer {
+  floor: Floor;
+  building: Building;
+  dx: number;
+  dy: number;
+}
+
+const BUILDING_PAD = 0.6;
+
 const DEVICE_R = 15;
 const SNAP_PX = 10;
 const HIT_PAD_PX = 6;
@@ -62,7 +78,8 @@ export class ZfpCanvas extends LitElement {
     linkMode: { attribute: false },
     selection: { attribute: false },
     placing: { attribute: false },
-    imageUrl: { attribute: false },
+    imageUrls: { attribute: false },
+    site: { attribute: false },
     t: { attribute: false },
     wallMaterial: { attribute: false },
     wallThickness: { attribute: false },
@@ -86,7 +103,9 @@ export class ZfpCanvas extends LitElement {
   declare linkMode: "tree" | "all";
   declare selection: string[];
   declare placing: string | null;
-  declare imageUrl: string | null;
+  /** object URLs of background images by image id */
+  declare imageUrls: Record<string, string>;
+  declare site: SiteView | null;
   declare t: Translate;
   declare wallMaterial: MaterialId;
   declare wallThickness: number;
@@ -106,12 +125,13 @@ export class ZfpCanvas extends LitElement {
   private pan: { x: number; y: number; vp: Viewport; onItem?: boolean } | null = null;
   /** view-mode press on a device: a click opens it, a drag hints at edit mode */
   private viewPress: { ieee: string; x: number; y: number; hinted: boolean } | null = null;
+  private labelPress = false;
   private pinch: { d: number; mid: Pt; vp: Viewport } | null = null;
   private spaceDown = false;
   private size = { w: 0, h: 0 };
   private ro?: ResizeObserver;
-  private heatBitmap: ImageBitmap | null = null;
-  private heatKey: unknown = null;
+  private heatBitmaps = new Map<unknown, ImageBitmap>();
+  private buildingDrag: { id: string; start: Pt; origin: Pt; moved: boolean; screen: Pt } | null = null;
   private rafId = 0;
   private needsFit = true;
   /** set once the user pans/zooms; until then resizes re-fit the content */
@@ -128,7 +148,8 @@ export class ZfpCanvas extends LitElement {
     this.linkMode = "tree";
     this.selection = [];
     this.placing = null;
-    this.imageUrl = null;
+    this.imageUrls = {};
+    this.site = null;
     this.t = (k: I18nKey) => k;
     this.wallMaterial = "brick";
     this.wallThickness = 0.15;
@@ -150,6 +171,68 @@ export class ZfpCanvas extends LitElement {
 
   get floor(): Floor | undefined {
     return this.shown?.floors.find((f) => f.id === this.floorId);
+  }
+
+  /** Floors drawn in this view with their offsets into view coordinates. */
+  viewLayers(): ViewLayer[] {
+    const p = this.shown;
+    if (!p) return [];
+    if (!this.site) {
+      const f = this.floor;
+      const b = f && p.buildings.find((x) => x.id === f.buildingId);
+      return f && b ? [{ floor: f, building: b, dx: 0, dy: 0 }] : [];
+    }
+    const out: ViewLayer[] = [];
+    for (const b of p.buildings) {
+      if (!b.visible) continue;
+      const f = floorsOf(p, b.id).find((fl) => fl.level === this.site!.level);
+      if (f) out.push({ floor: f, building: b, dx: b.x, dy: b.y });
+    }
+    return out;
+  }
+
+  /** Translation from site coordinates (RF results) into view coordinates. */
+  private siteShift(): Pt {
+    if (this.site) return { x: 0, y: 0 };
+    const b = this.shown?.buildings.find((x) => x.id === this.floor?.buildingId);
+    return b ? { x: -b.x, y: -b.y } : { x: 0, y: 0 };
+  }
+
+  /** View-coordinate positions of devices placed on displayed floors. */
+  private viewPositions(): Map<string, { pt: Pt; floorId: string }> {
+    const layers = new Map(this.viewLayers().map((l) => [l.floor.id, l]));
+    const out = new Map<string, { pt: Pt; floorId: string }>();
+    for (const [ieee, pl] of Object.entries(this.shown?.placements ?? {})) {
+      const l = layers.get(pl.floorId);
+      if (l) out.set(ieee, { pt: { x: pl.x + l.dx, y: pl.y + l.dy }, floorId: pl.floorId });
+    }
+    return out;
+  }
+
+  /** Visible buildings' footprints in view coordinates (site view only). */
+  private footprints(): { building: Building; box: { minX: number; minY: number; maxX: number; maxY: number }; hasLevel: boolean }[] {
+    if (!this.site) return [];
+    const p = this.shown;
+    const shownIds = new Set(this.viewLayers().map((l) => l.building.id));
+    return p.buildings
+      .filter((b) => b.visible)
+      .map((b) => {
+        const local = buildingExtent(p, b.id) ?? { minX: 0, minY: 0, maxX: 6, maxY: 4 };
+        return {
+          building: b,
+          hasLevel: shownIds.has(b.id),
+          box: {
+            minX: local.minX + b.x - BUILDING_PAD,
+            minY: local.minY + b.y - BUILDING_PAD,
+            maxX: local.maxX + b.x + BUILDING_PAD,
+            maxY: local.maxY + b.y + BUILDING_PAD,
+          },
+        };
+      });
+  }
+
+  private viewKey(): string {
+    return this.site ? `site:${this.site.level}` : this.floorId;
   }
 
   private deviceMap(): Map<string, ZDevice> {
@@ -174,6 +257,19 @@ export class ZfpCanvas extends LitElement {
     this.userMoved = true;
     const scale = Math.max(this._vp.scale, 60);
     this.animateTo({ scale, tx: this.size.w / 2 - pt.x * scale, ty: this.size.h / 2 - pt.y * scale }, null);
+  }
+
+  /** Center on a point given in site coordinates (RF results). */
+  centerOnSite(pt: Pt): void {
+    const shift = this.siteShift();
+    this.centerOn({ x: pt.x + shift.x, y: pt.y + shift.y });
+  }
+
+  /** Center on a device if it is drawn in this view. */
+  centerOnDevice(ieee: string): boolean {
+    const pos = this.viewPositions().get(ieee);
+    if (pos) this.centerOn(pos.pt);
+    return !!pos;
   }
 
   private animateTo(target: Viewport | null, immediate: Viewport | null): void {
@@ -207,15 +303,17 @@ export class ZfpCanvas extends LitElement {
   }
 
   private contentBox() {
-    const f = this.floor;
-    if (!f) return null;
-    let box = bboxOf([...f.walls.flatMap((w) => [w.a, w.b]), ...f.rooms.flatMap((r) => r.points)]);
-    const devs = Object.values(this.shown.placements).filter((p) => p.floorId === f.id);
-    box = unionBBox(box, bboxOf(devs));
-    if (f.background && this.layers.background) {
-      const bg = f.background;
-      box = unionBBox(box, { minX: bg.x, minY: bg.y, maxX: bg.x + bg.width * bg.scale, maxY: bg.y + bg.height * bg.scale });
+    let box: ReturnType<typeof bboxOf> = null;
+    for (const { floor: f, dx, dy } of this.viewLayers()) {
+      const pts = [...f.walls.flatMap((w) => [w.a, w.b]), ...f.rooms.flatMap((r) => r.points)];
+      pts.push(...Object.values(this.shown.placements).filter((p) => p.floorId === f.id));
+      if (f.background && this.layers.background && f.background.visible) {
+        const bg = f.background;
+        pts.push({ x: bg.x, y: bg.y }, { x: bg.x + bg.width * bg.scale, y: bg.y + bg.height * bg.scale });
+      }
+      box = unionBBox(box, bboxOf(pts.map((p) => ({ x: p.x + dx, y: p.y + dy }))));
     }
+    for (const fp of this.footprints()) box = unionBBox(box, fp.box);
     return box;
   }
 
@@ -257,10 +355,12 @@ export class ZfpCanvas extends LitElement {
       this.toolImpl.cancel(this.host());
       this.toolImpl = createTool(this.tool);
     }
-    if (changed.has("floorId")) {
-      const prev = changed.get("floorId") as string | undefined;
-      if (prev) this.viewports.set(prev, this._vp);
-      const saved = this.viewports.get(this.floorId);
+    if (changed.has("floorId") || changed.has("site")) {
+      const prevFloor = changed.has("floorId") ? (changed.get("floorId") as string | undefined) : this.floorId;
+      const prevSite = changed.has("site") ? (changed.get("site") as SiteView | null | undefined) : this.site;
+      const prevKey = prevSite ? `site:${prevSite.level}` : prevFloor;
+      if (prevKey && this.size.w) this.viewports.set(prevKey, this._vp);
+      const saved = this.viewports.get(this.viewKey());
       this._preview = null;
       this.toolImpl.cancel(this.host());
       if (saved) this._vp = saved;
@@ -274,25 +374,32 @@ export class ZfpCanvas extends LitElement {
 
   protected updated(changed: PropertyValues<this>): void {
     if (changed.has("rf")) void this.refreshHeat();
-    if (changed.has("_vp") || changed.has("rf") || changed.has("layers") || changed.has("floorId") || changed.has("gridSize")) {
+    if (
+      changed.has("_vp") || changed.has("rf") || changed.has("layers") || changed.has("floorId") ||
+      changed.has("gridSize") || changed.has("site") || changed.has("project")
+    ) {
       this.drawBase();
     }
   }
 
   private async refreshHeat(): Promise<void> {
-    const heat = this.rf?.heat ?? null;
-    if (heat === this.heatKey) return;
-    this.heatKey = heat;
-    this.heatBitmap?.close();
-    this.heatBitmap = null;
-    if (heat && heat.rgba.length) {
+    const heats = this.rf?.heats ?? [];
+    const next = new Map<unknown, ImageBitmap>();
+    for (const heat of heats) {
+      const existing = this.heatBitmaps.get(heat);
+      if (existing) {
+        next.set(heat, existing);
+        continue;
+      }
+      if (!heat.rgba.length) continue;
       try {
-        const rgba = new Uint8ClampedArray(heat.rgba);
-        this.heatBitmap = await createImageBitmap(new ImageData(rgba, heat.cols, heat.rows));
+        next.set(heat, await createImageBitmap(new ImageData(new Uint8ClampedArray(heat.rgba), heat.cols, heat.rows)));
       } catch {
-        this.heatBitmap = null;
+        /* skip a raster the browser cannot decode */
       }
     }
+    for (const [key, bmp] of this.heatBitmaps) if (!next.has(key)) bmp.close();
+    this.heatBitmaps = next;
     this.drawBase();
   }
 
@@ -345,13 +452,18 @@ export class ZfpCanvas extends LitElement {
     lines(minorStep, 0.05);
     lines(majorStep, 0.1);
 
-    const heat = this.rf?.heat;
-    if (this.layers.heatmap && heat && this.heatBitmap && heat.floorId === this.floorId) {
-      const o = toScreen(vp, { x: heat.originX, y: heat.originY });
+    if (this.layers.heatmap) {
+      const shown = new Set(this.viewLayers().map((l) => l.floor.id));
+      const shift = this.siteShift();
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
       ctx.globalAlpha = 0.9;
-      ctx.drawImage(this.heatBitmap, o.x, o.y, heat.cols * heat.cell * vp.scale, heat.rows * heat.cell * vp.scale);
+      for (const heat of this.rf?.heats ?? []) {
+        const bmp = this.heatBitmaps.get(heat);
+        if (!bmp || !shown.has(heat.floorId)) continue;
+        const o = toScreen(vp, { x: heat.originX + shift.x, y: heat.originY + shift.y });
+        ctx.drawImage(bmp, o.x, o.y, heat.cols * heat.cell * vp.scale, heat.rows * heat.cell * vp.scale);
+      }
       ctx.globalAlpha = 1;
     }
   }
@@ -434,17 +546,30 @@ export class ZfpCanvas extends LitElement {
   private hitTest(ev: { clientX: number; clientY: number }, includeGeometry = this.editable): Hit | null {
     const s = this.eventPoint(ev);
     const w = toWorld(this._vp, s);
-    const f = this.floor;
-    if (!f) return null;
-    const placements = this.shown.placements;
     let best: { ieee: string; d: number } | null = null;
-    for (const [ieee, pl] of Object.entries(placements)) {
-      if (pl.floorId !== f.id) continue;
-      const d = dist(toScreen(this._vp, pl), s);
+    for (const [ieee, { pt }] of this.viewPositions()) {
+      const d = dist(toScreen(this._vp, pt), s);
       if (d <= DEVICE_R + 4 && (!best || d < best.d)) best = { ieee, d };
     }
     if (best) return { kind: "device", ieee: best.ieee };
-    if (!includeGeometry) return null;
+    if (this.site) {
+      // labels first: they sit above the footprint and open the building
+      for (const fp of [...this.footprints()].reverse()) {
+        const tl = toScreen(this._vp, { x: fp.box.minX, y: fp.box.minY });
+        const w = fp.building.name.length * 7.2 + 28;
+        if (s.x >= tl.x && s.x <= tl.x + w && s.y >= tl.y - 26 && s.y <= tl.y) {
+          return { kind: "building", id: fp.building.id, label: true };
+        }
+      }
+      for (const fp of [...this.footprints()].reverse()) {
+        if (w.x >= fp.box.minX && w.x <= fp.box.maxX && w.y >= fp.box.minY && w.y <= fp.box.maxY) {
+          return { kind: "building", id: fp.building.id, label: false };
+        }
+      }
+      return null;
+    }
+    const f = this.floor;
+    if (!f || !includeGeometry) return null;
 
     const handleTol = 8;
     for (const wall of f.walls) {
@@ -476,7 +601,25 @@ export class ZfpCanvas extends LitElement {
   // ---------- input ----------
 
   private get activeTool(): Tool | null {
-    return this.editable && !this.placing ? this.toolImpl : null;
+    return this.editable && !this.placing && !this.site ? this.toolImpl : null;
+  }
+
+  /** Displayed floor under a view point (site view: the building footprint it falls in). */
+  private layerAt(pt: Pt): ViewLayer | null {
+    const layers = this.viewLayers();
+    if (!this.site) return layers[0] ?? null;
+    const fp = this.footprints().find(
+      (f) => f.hasLevel && pt.x >= f.box.minX && pt.x <= f.box.maxX && pt.y >= f.box.minY && pt.y <= f.box.maxY,
+    );
+    return fp ? (layers.find((l) => l.building.id === fp.building.id) ?? null) : null;
+  }
+
+  private placeAtView(ieee: string, pt: Pt): boolean {
+    const layer = this.layerAt(pt);
+    if (!layer) return false;
+    const local = { x: pt.x - layer.dx, y: pt.y - layer.dy };
+    this.emit("zfp-commit", { fn: (p: Project) => placeAt(p, ieee, layer.floor.id, local) });
+    return true;
   }
 
   private onPointerDown = (ev: PointerEvent): void => {
@@ -495,12 +638,26 @@ export class ZfpCanvas extends LitElement {
     }
 
     if (this.placing && ev.button === 0) {
-      const world = this.eventWorld(ev);
       const ieee = this.placing;
-      this.emit("zfp-commit", { fn: (p: Project) => placeAt(p, ieee, this.floorId, world) });
-      this.emit("zfp-placed", { ieee });
-      this._ghost = null;
+      if (this.placeAtView(ieee, this.eventWorld(ev))) {
+        this.emit("zfp-placed", { ieee });
+        this._ghost = null;
+      }
       return;
+    }
+
+    if (this.site && ev.button === 0) {
+      const hit = this.hitTest(ev);
+      if (hit?.kind === "device") {
+        this.viewPress = { ieee: hit.ieee, x: pt.x, y: pt.y, hinted: false };
+        return;
+      }
+      if (hit?.kind === "building" && (this.editable || hit.label)) {
+        const b = this.shown.buildings.find((x) => x.id === hit.id)!;
+        this.buildingDrag = { id: hit.id, start: this.eventWorld(ev), origin: { x: b.x, y: b.y }, moved: false, screen: pt };
+        this.labelPress = hit.label;
+        return;
+      }
     }
 
     const tool = this.activeTool;
@@ -537,6 +694,17 @@ export class ZfpCanvas extends LitElement {
       this.userMoved = true;
       const z = zoomAt(base, this.pinch.mid, d / this.pinch.d);
       this._vp = { ...z, tx: z.tx + mid.x - this.pinch.mid.x, ty: z.ty + mid.y - this.pinch.mid.y };
+      return;
+    }
+    if (this.buildingDrag) {
+      const d = this.buildingDrag;
+      if (!d.moved && Math.hypot(pt.x - d.screen.x, pt.y - d.screen.y) <= 4) return;
+      if (!this.editable) return;
+      d.moved = true;
+      const w = this.eventWorld(ev);
+      const snap = (v: number) => Math.round(v * 2) / 2;
+      const pos = { x: snap(d.origin.x + w.x - d.start.x), y: snap(d.origin.y + w.y - d.start.y) };
+      this._preview = updateBuilding(this.project, d.id, pos);
       return;
     }
     if (this.viewPress) {
@@ -577,6 +745,19 @@ export class ZfpCanvas extends LitElement {
       if (this.pointers.size === 1) {
         const [p] = [...this.pointers.values()];
         this.pan = { x: p.x, y: p.y, vp: this._vp };
+      }
+      return;
+    }
+    if (this.buildingDrag) {
+      const d = this.buildingDrag;
+      this.buildingDrag = null;
+      const preview = this._preview;
+      this._preview = null;
+      if (d.moved && preview) {
+        const b = preview.buildings.find((x) => x.id === d.id)!;
+        this.emit("zfp-commit", { fn: (p: Project) => updateBuilding(p, d.id, { x: b.x, y: b.y }) });
+      } else if (!d.moved && this.labelPress) {
+        this.emit("zfp-open-building", { id: d.id });
       }
       return;
     }
@@ -662,8 +843,7 @@ export class ZfpCanvas extends LitElement {
     this._ghost = null;
     if (!ieee || !this.editable) return;
     ev.preventDefault();
-    const world = this.eventWorld(ev);
-    this.emit("zfp-commit", { fn: (p: Project) => placeAt(p, ieee, this.floorId, world) });
+    if (!this.placeAtView(ieee, this.eventWorld(ev))) return;
     this.emit("zfp-placed", { ieee });
     this.emit("zfp-select", { ids: [DEVICE_PREFIX + ieee] });
   };
@@ -674,6 +854,8 @@ export class ZfpCanvas extends LitElement {
     if (this.pan || this.pinch) return "grabbing";
     if (this.spaceDown) return "grab";
     if (this.placing) return "copy";
+    if (this.buildingDrag?.moved) return "grabbing";
+    if (this.site) return this._hoverDevice ? "pointer" : this.editable ? "default" : "grab";
     const tool = this.activeTool;
     if (!tool) return this._hoverDevice ? "pointer" : "grab";
     if (tool.id === "select" && this._hoverDevice) return "pointer";
@@ -684,6 +866,7 @@ export class ZfpCanvas extends LitElement {
     const f = this.floor;
     const vp = this._vp;
     const devices = this.deviceMap();
+    const layers = this.viewLayers();
     return html`
       <div
         class="wrap"
@@ -704,18 +887,25 @@ export class ZfpCanvas extends LitElement {
         <span class="probe"></span>
         <canvas></canvas>
         <svg class="layer">
-          ${f
+          ${f || this.site
             ? svg`
               <g transform="matrix(${vp.scale} 0 0 ${vp.scale} ${vp.tx} ${vp.ty})">
-                ${this.renderBackground(f)}
-                ${this.renderRooms(f)}
-                ${this.renderWalls(f)}
+                ${repeat(
+                  layers,
+                  (l) => l.floor.id,
+                  (l) => svg`<g transform="translate(${l.dx} ${l.dy})">
+                    ${this.renderBackground(l.floor)}
+                    ${this.renderRooms(l.floor)}
+                    ${this.renderWalls(l.floor)}
+                  </g>`,
+                )}
               </g>
-              ${this.layers.links ? this.renderLinks(f, devices) : nothing}
-              ${this.layers.labels ? this.renderRoomLabels(f) : nothing}
-              ${this.renderSelectionHandles(f)}
+              ${this.renderFootprints()}
+              ${this.layers.links ? this.renderLinks(devices) : nothing}
+              ${this.layers.labels ? layers.map((l) => this.renderRoomLabels(l.floor, l.dx, l.dy)) : nothing}
+              ${f && !this.site ? this.renderSelectionHandles(f) : nothing}
               ${this.layers.suggestions ? this.renderSuggestions() : nothing}
-              ${this.renderDevices(f, devices)}
+              ${this.renderDevices(devices)}
               ${this.renderGhost(devices)}
               ${this.activeTool ? this.activeTool.overlay(this.host()) : nothing}`
             : nothing}
@@ -727,10 +917,11 @@ export class ZfpCanvas extends LitElement {
 
   private renderBackground(f: Floor) {
     const bg = f.background;
-    if (!bg || !this.layers.background || !bg.visible || !this.imageUrl) return nothing;
+    const url = bg && this.imageUrls[bg.imageId];
+    if (!bg || !this.layers.background || !bg.visible || !url) return nothing;
     const w = bg.width * bg.scale;
     const h = bg.height * bg.scale;
-    return svg`<image href=${this.imageUrl} x=${bg.x} y=${bg.y} width=${w} height=${h}
+    return svg`<image href=${url} x=${bg.x} y=${bg.y} width=${w} height=${h}
       opacity=${bg.opacity} preserveAspectRatio="none"
       transform=${bg.rotation ? `rotate(${bg.rotation} ${bg.x + w / 2} ${bg.y + h / 2})` : ""}
       class=${this.tool === "image" && this.editable ? "bg editing" : "bg"}></image>`;
@@ -770,14 +961,16 @@ export class ZfpCanvas extends LitElement {
       })}`;
   }
 
-  private renderRoomLabels(f: Floor) {
+  private renderRoomLabels(f: Floor, dx = 0, dy = 0) {
     if (this._vp.scale < 14) return nothing;
+    const at = (p: Pt) => toScreen(this._vp, { x: p.x + dx, y: p.y + dy });
     return repeat(f.rooms, (r) => r.id, (r) => {
       // top-left corner keeps labels clear of devices, which tend to sit mid-room
       const box = bboxOf(r.points)!;
-      let anchor = toScreen(this._vp, { x: box.minX, y: box.minY });
+      let anchor = at({ x: box.minX, y: box.minY });
       anchor = { x: anchor.x + 10, y: anchor.y + 18 };
-      if (!pointInPolygon(toWorld(this._vp, anchor), r.points)) anchor = toScreen(this._vp, polygonCentroid(r.points));
+      const local = toWorld(this._vp, anchor);
+      if (!pointInPolygon({ x: local.x - dx, y: local.y - dy }, r.points)) anchor = at(polygonCentroid(r.points));
       return svg`<g class="room-label" transform="translate(${anchor.x} ${anchor.y})">
         <text>${r.name}</text>
         <text class="area" dy="14">${polygonArea(r.points).toFixed(1)} m²</text>
@@ -796,9 +989,15 @@ export class ZfpCanvas extends LitElement {
     });
   }
 
-  private renderLinks(f: Floor, devices: Map<string, ZDevice>) {
+  private renderLinks(devices: Map<string, ZDevice>) {
     const links = visibleLinks(this.network?.links ?? [], this.linkMode);
     const placements = this.shown.placements;
+    const positions = this.viewPositions();
+    const shift = this.siteShift();
+    const buildingOf = (floorId: string) => {
+      const fl = this.shown.floors.find((x) => x.id === floorId);
+      return { floor: fl, building: this.shown.buildings.find((b) => b.id === fl?.buildingId) };
+    };
     const candidate = this._hoverDevice ?? this.highlight ?? this.selectedDevice();
     // only focus when the device actually has links to show
     const highlighted = candidate && links.some((l) => l.a === candidate || l.b === candidate) ? candidate : null;
@@ -808,16 +1007,16 @@ export class ZfpCanvas extends LitElement {
       const pa = placements[link.a];
       const pb = placements[link.b];
       if (!pa || !pb || !devices.has(link.a) || !devices.has(link.b)) continue;
-      const aHere = pa.floorId === f.id;
-      const bHere = pb.floorId === f.id;
+      const aHere = positions.has(link.a);
+      const bHere = positions.has(link.b);
       if (!aHere && !bHere) continue;
       const focus = highlighted ? link.a === highlighted || link.b === highlighted : true;
       const cls = `link ${link.relationship} ${focus ? "" : "dim"} ${highlighted && focus ? "focus" : ""}`;
       const color = lqiColor(link.lqi);
       const width = lqiWidth(link.lqi);
       if (aHere && bHere) {
-        const sa = toScreen(this._vp, pa);
-        const sb = toScreen(this._vp, pb);
+        const sa = toScreen(this._vp, positions.get(link.a)!.pt);
+        const sb = toScreen(this._vp, positions.get(link.b)!.pt);
         // dash flows from child toward parent on route links
         const [from, to] = link.parent === link.a ? [sb, sa] : [sa, sb];
         out.push(svg`<line class=${cls} x1=${from.x} y1=${from.y} x2=${to.x} y2=${to.y}
@@ -830,12 +1029,17 @@ export class ZfpCanvas extends LitElement {
             <text text-anchor="middle" dy="4">${link.lqi}</text></g>`);
         }
       } else {
-        const here = aHere ? pa : pb;
+        const hereView = positions.get(aHere ? link.a : link.b)!;
         const other = aHere ? pb : pa;
-        const otherFloor = this.shown.floors.find((fl) => fl.id === other.floorId);
-        const s = toScreen(this._vp, here);
-        let dx = other.x - here.x;
-        let dy = other.y - here.y;
+        const hereInfo = buildingOf(hereView.floorId);
+        const otherInfo = buildingOf(other.floorId);
+        const otherFloor = otherInfo.floor;
+        const s = toScreen(this._vp, hereView.pt);
+        // direction in site coordinates so stubs point at other buildings too
+        const hereSite = { x: hereView.pt.x - shift.x, y: hereView.pt.y - shift.y };
+        const otherSite = { x: other.x + (otherInfo.building?.x ?? 0), y: other.y + (otherInfo.building?.y ?? 0) };
+        let dx = otherSite.x - hereSite.x;
+        let dy = otherSite.y - hereSite.y;
         const len = Math.hypot(dx, dy);
         if (len < 0.3) {
           dx = 0.7;
@@ -844,12 +1048,19 @@ export class ZfpCanvas extends LitElement {
         const k = 52 / Math.hypot(dx, dy);
         const ex = s.x + dx * k;
         const ey = s.y + dy * k;
-        const up = (otherFloor?.level ?? 0) > (this.floor?.level ?? 0);
+        const sameBuilding = otherInfo.building?.id === hereInfo.building?.id;
+        const hereLevel = hereInfo.floor?.level ?? 0;
+        const levelTag = otherFloor
+          ? otherFloor.level === hereLevel ? "" : `${otherFloor.level > hereLevel ? "↑" : "↓"}${otherFloor.level}`
+          : "?";
+        const tag = sameBuilding ? levelTag : `${(otherInfo.building?.name ?? "?").slice(0, 10)}${levelTag ? ` ${levelTag}` : ""}`;
+        const tagW = Math.max(24, tag.length * 6.5 + 10);
         stubs.push(svg`<g class="stub ${focus ? "" : "dim"}">
           <line class=${cls} x1=${s.x} y1=${s.y} x2=${ex} y2=${ey} stroke=${color} stroke-width=${width}></line>
           <g transform="translate(${ex} ${ey})">
-            <rect x="-12" y="-9" width="24" height="18" rx="5"></rect>
-            <text text-anchor="middle" dy="4">${up ? "↑" : "↓"}${otherFloor ? otherFloor.level : "?"}</text>
+            <rect x=${-tagW / 2} y="-9" width=${tagW} height="18" rx="5"
+              style=${!sameBuilding && otherInfo.building ? `stroke:${otherInfo.building.color}` : ""}></rect>
+            <text text-anchor="middle" dy="4">${tag}</text>
           </g></g>`);
       }
     }
@@ -861,8 +1072,8 @@ export class ZfpCanvas extends LitElement {
     return d ? d.slice(DEVICE_PREFIX.length) : null;
   }
 
-  private renderDevices(f: Floor, devices: Map<string, ZDevice>) {
-    const entries = Object.entries(this.shown.placements).filter(([, pl]) => pl.floorId === f.id);
+  private renderDevices(devices: Map<string, ZDevice>) {
+    const entries = [...this.viewPositions()].map(([ieee, v]) => [ieee, v.pt] as const);
     // draw routers/coordinator above end devices
     const order = { Coordinator: 3, Router: 2, EndDevice: 1, Unknown: 0 } as const;
     entries.sort(([a], [b]) => order[devices.get(a)?.type ?? "Unknown"] - order[devices.get(b)?.type ?? "Unknown"]);
@@ -900,14 +1111,35 @@ export class ZfpCanvas extends LitElement {
   }
 
   private renderSuggestions() {
-    const list: Suggestion[] = this.rf?.floorId === this.floorId ? (this.rf?.suggestions ?? []) : [];
+    const shown = new Set(this.viewLayers().map((l) => l.floor.id));
+    const shift = this.siteShift();
+    const list: Suggestion[] = (this.rf?.suggestions ?? []).filter((sg) => shown.has(sg.floorId));
     return list.map((sg, i) => {
-      const s = toScreen(this._vp, sg.pos);
+      const s = toScreen(this._vp, { x: sg.pos.x + shift.x, y: sg.pos.y + shift.y });
       return svg`<g class="suggestion" transform="translate(${s.x} ${s.y})">
         <circle class="halo" r="22"></circle>
         <circle class="core" r="14"></circle>
         <path transform="translate(-9 -9) scale(0.75)" d=${mdiPlus}></path>
         <text class="sugg-label" text-anchor="middle" y="36">${i + 1}. +${Math.round(sg.gainArea)} m²</text>
+      </g>`;
+    });
+  }
+
+  private renderFootprints() {
+    if (!this.site) return nothing;
+    return this.footprints().map(({ building: b, box, hasLevel }) => {
+      const tl = toScreen(this._vp, { x: box.minX, y: box.minY });
+      const br = toScreen(this._vp, { x: box.maxX, y: box.maxY });
+      const w = b.name.length * 7.2 + 28;
+      const dragging = this.buildingDrag?.id === b.id && this.buildingDrag.moved;
+      return svg`<g class="footprint ${hasLevel ? "" : "empty"} ${dragging ? "dragging" : ""} ${this.editable ? "movable" : ""}"
+          style="--b:${b.color}">
+        <rect class="fp-box" x=${tl.x} y=${tl.y} width=${br.x - tl.x} height=${br.y - tl.y} rx="10"></rect>
+        <g class="fp-label" transform="translate(${tl.x} ${tl.y - 26})">
+          <rect width=${w} height="22" rx="11"></rect>
+          <circle cx="12" cy="11" r="4"></circle>
+          <text x="22" y="15">${b.name}</text>
+        </g>
       </g>`;
     });
   }
@@ -968,6 +1200,42 @@ export class ZfpCanvas extends LitElement {
       }
       .bg.editing {
         outline: 2px dashed var(--zfp-accent);
+      }
+      .fp-box {
+        fill: color-mix(in srgb, var(--b) 4%, transparent);
+        stroke: var(--b);
+        stroke-width: 1.5px;
+        stroke-dasharray: 6 5;
+        opacity: 0.8;
+      }
+      .footprint.movable .fp-box {
+        cursor: move;
+      }
+      .footprint.dragging .fp-box {
+        fill: color-mix(in srgb, var(--b) 12%, transparent);
+        stroke-dasharray: none;
+      }
+      .footprint.empty .fp-box {
+        opacity: 0.4;
+      }
+      .fp-label {
+        cursor: pointer;
+      }
+      .fp-label rect {
+        fill: var(--zfp-surface);
+        stroke: var(--b);
+        stroke-width: 1.5px;
+      }
+      .fp-label circle {
+        fill: var(--b);
+      }
+      .fp-label text {
+        font-size: 12px;
+        font-weight: 600;
+        fill: var(--zfp-text);
+      }
+      .footprint.empty .fp-label {
+        opacity: 0.6;
       }
       .room {
         fill: color-mix(in srgb, var(--zfp-text) 4%, transparent);

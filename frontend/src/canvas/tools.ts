@@ -21,7 +21,8 @@ export type Hit =
   | { kind: "device"; ieee: string }
   | { kind: "vertex"; ref: VertexRef; pt: Pt }
   | { kind: "wall"; id: string }
-  | { kind: "room"; id: string };
+  | { kind: "room"; id: string }
+  | { kind: "building"; id: string; label: boolean };
 
 export const DEVICE_PREFIX = "dev:";
 

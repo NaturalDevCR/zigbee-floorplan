@@ -61,8 +61,8 @@ describe("FloorplanController", () => {
   it("debounces saves into one request", async () => {
     const api = fakeApi();
     const { ctrl } = await ready(api);
-    ctrl.apply((p) => addFloor(p, "A").project);
-    ctrl.apply((p) => addFloor(p, "B").project);
+    ctrl.apply((p) => addFloor(p, "A", "b").project);
+    ctrl.apply((p) => addFloor(p, "B", "b").project);
     expect(ctrl.saveState).toBe("dirty");
     await vi.advanceTimersByTimeAsync(900);
     expect(api.saves).toBe(1);
@@ -73,7 +73,7 @@ describe("FloorplanController", () => {
   it("undo back to persisted state needs no save", async () => {
     const api = fakeApi();
     const { ctrl } = await ready(api);
-    ctrl.apply((p) => addFloor(p, "A").project);
+    ctrl.apply((p) => addFloor(p, "A", "b").project);
     ctrl.undo();
     expect(ctrl.dirty).toBe(false);
     await vi.advanceTimersByTimeAsync(900);
@@ -85,7 +85,7 @@ describe("FloorplanController", () => {
     const { ctrl } = await ready(api);
     const notices: string[] = [];
     ctrl.onNotice((n) => notices.push(n.kind));
-    ctrl.apply((p) => addFloor(p, "Mine").project);
+    ctrl.apply((p) => addFloor(p, "Mine", "b").project);
     // another client saves while we have unsaved edits: ignored until our save
     api.remoteSave({ version: 1, floors: [{ id: "x", name: "Theirs", level: 0 }], placements: {}, settings: {} });
     expect(ctrl.project.floors[0].name).toBe("Mine");
@@ -111,7 +111,7 @@ describe("FloorplanController", () => {
     const notices: string[] = [];
     ctrl.onNotice((n) => notices.push(n.kind));
     api.failNext = { code: "too_large", message: "big" };
-    ctrl.apply((p) => addFloor(p, "A").project);
+    ctrl.apply((p) => addFloor(p, "A", "b").project);
     await vi.advanceTimersByTimeAsync(900);
     expect(ctrl.saveState).toBe("error");
     expect(notices).toEqual(["save_error"]);
@@ -120,7 +120,7 @@ describe("FloorplanController", () => {
   it("read-only users cannot edit", async () => {
     const api = fakeApi({ admin: false });
     const { ctrl } = await ready(api);
-    ctrl.apply((p) => addFloor(p, "A").project);
+    ctrl.apply((p) => addFloor(p, "A", "b").project);
     expect(ctrl.project.floors).toEqual([]);
   });
 

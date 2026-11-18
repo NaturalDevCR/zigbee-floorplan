@@ -2,6 +2,7 @@
 
 Visualiza tu red **Zigbee2MQTT** sobre planos interactivos de tu casa: varios pisos, paredes con materiales reales, enlaces del mesh en vivo y un mapa de cobertura estimada que se calibra con la calidad de enlace (LQI) real de tus dispositivos.
 
+- **Varios edificios o zonas** (casa, taller, oficinas…), cada uno con sus pisos. Ábrelos por separado o júntalos en la vista **Todo el sitio**, donde se ocultan/muestran y se arrastran para ubicarlos entre sí.
 - **Editor de planos** con grid, ajuste a vértices/paredes/ángulos, cotas en vivo, deshacer/rehacer y autoguardado.
 - **Imagen de fondo** (foto o plano) con escala calibrable: dibuja una línea sobre una medida conocida.
 - **Materiales** por pared (drywall, madera, vidrio, Low‑E, ladrillo, bloque, concreto, concreto armado, metal) y losa por piso, con atenuación en dB editable.
@@ -42,6 +43,13 @@ La integración registra el panel **Zigbee Floorplan** en la barra lateral y car
 
 Solo administradores pueden editar; los demás usuarios ven el plano en modo lectura.
 
+### Edificios y sitio
+
+- El selector junto al título cambia entre **Todo el sitio** y cada edificio, y permite **Agregar edificio**.
+- En un edificio, las pestañas son sus pisos; ahí se dibujan paredes, habitaciones y dispositivos.
+- En **Todo el sitio**, las pestañas son niveles (0, 1, 2…) y se muestra ese piso de cada edificio visible. En modo Editar, arrastra un edificio para posicionarlo; clic en su nombre para abrirlo. La pestaña **Edificios** permite ocultar/mostrar, ajustar posición y color.
+- La cobertura entre edificios suma las paredes exteriores de ambos; las losas solo cuentan dentro del mismo edificio. Los enlaces hacia otro edificio aparecen como un trazo corto con su nombre.
+
 ### Atajos
 
 | Tecla | Acción |
@@ -64,6 +72,7 @@ floor: ""            # id de piso; vacío = primero
 height: 420
 links: tree          # tree (rutas) | all (todos los vecinos)
 show_floor_tabs: true
+building: site       # opcional: "site" (todo el sitio) o id de edificio
 layers: [heatmap, links, labels, background]   # también: suggestions
 ```
 

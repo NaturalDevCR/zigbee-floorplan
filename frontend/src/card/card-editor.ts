@@ -43,7 +43,11 @@ export class ZigbeeFloorplanCardEditor extends LitElement {
   protected render() {
     if (!this.hass || !this._config) return nothing;
     const t = translator(this.hass.locale?.language ?? this.hass.language);
-    const floors = this.ctrl?.ready ? this.ctrl.project.floors : [];
+    const project = this.ctrl?.ready ? this.ctrl.project : null;
+    const floors = project?.floors ?? [];
+    const multi = (project?.buildings.length ?? 0) > 1;
+    const floorLabel = (f: (typeof floors)[number]) =>
+      multi ? `${project!.buildings.find((b) => b.id === f.buildingId)?.name ?? ""} · ${f.name}` : f.name;
     const layerOptions = (["heatmap", "links", "labels", "background", "suggestions"] as const).map((l) => ({
       value: l,
       label: t(`layers.${l}` as I18nKey),
@@ -51,11 +55,24 @@ export class ZigbeeFloorplanCardEditor extends LitElement {
     const schema = [
       { name: "title", selector: { text: {} } },
       {
+        name: "building",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "", label: "—" },
+              ...(multi ? [{ value: "site", label: t("site.all") }] : []),
+              ...(project?.buildings ?? []).map((b) => ({ value: b.id, label: b.name })),
+            ],
+          },
+        },
+      },
+      {
         name: "floor",
         selector: {
           select: {
             mode: "dropdown",
-            options: [{ value: "", label: "—" }, ...floors.map((f) => ({ value: f.id, label: f.name }))],
+            options: [{ value: "", label: "—" }, ...floors.map((f) => ({ value: f.id, label: floorLabel(f) }))],
           },
         },
       },
@@ -77,6 +94,7 @@ export class ZigbeeFloorplanCardEditor extends LitElement {
     ];
     const labels: Record<string, I18nKey> = {
       title: "card.title",
+      building: "card.building",
       floor: "card.floor",
       height: "card.height",
       layers: "card.layers",
@@ -90,6 +108,7 @@ export class ZigbeeFloorplanCardEditor extends LitElement {
       show_floor_tabs: true,
       ...this._config,
       floor: this._config.floor ?? "",
+      building: this._config.building ?? "",
     };
     return html`<ha-form
       .hass=${this.hass}
@@ -100,6 +119,7 @@ export class ZigbeeFloorplanCardEditor extends LitElement {
         const value = { ...e.detail.value };
         if (!value.floor) delete value.floor;
         if (!value.title) delete value.title;
+        if (!value.building) delete value.building;
         this._config = { ...(value as unknown as CardConfig), type: this._config.type };
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
       }}

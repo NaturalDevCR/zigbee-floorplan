@@ -9,10 +9,12 @@ export interface RfRequest {
   project: Project;
   devices: { ieee: string; type: DeviceType }[];
   links: ZLink[];
-  floorId: string;
+  /** floors to map: one in building view, one per visible building in site view */
+  floorIds: string[];
   suggest: boolean;
 }
 
+/** Coverage raster in site coordinates. */
 export interface RfHeat {
   floorId: string;
   originX: number;
@@ -25,8 +27,8 @@ export interface RfHeat {
 }
 
 export interface RfResult {
-  floorId: string;
-  heat: RfHeat | null;
+  floorIds: string[];
+  heats: RfHeat[];
   calibration: Calibration;
   suggestions: Suggestion[];
   /** estimated best RSSI at each placed device from the rest of the mesh */
@@ -47,17 +49,17 @@ export function runRf(req: RfRequest): RfResult {
     if (Number.isFinite(v)) deviceRssi[node.ieee] = Math.round(v);
   }
 
-  const heatmap = computeHeatmap(scene, req.floorId, params);
-  let heat: RfHeat | null = null;
-  let suggestions: Suggestion[] = [];
-  if (heatmap) {
+  const heats: RfHeat[] = [];
+  const suggestions: Suggestion[] = [];
+  for (const floorId of req.floorIds) {
+    const heatmap = computeHeatmap(scene, floorId, params);
+    if (!heatmap) continue;
     const rgba = new Uint8ClampedArray(heatmap.cols * heatmap.rows * 4);
     for (let i = 0; i < heatmap.values.length; i++) {
       if (!heatmap.mask[i]) continue;
-      const c = colorFor(heatmap.values[i]);
-      rgba.set(c, i * 4);
+      rgba.set(colorFor(heatmap.values[i]), i * 4);
     }
-    heat = {
+    heats.push({
       floorId: heatmap.floorId,
       originX: heatmap.originX,
       originY: heatmap.originY,
@@ -66,13 +68,13 @@ export function runRf(req: RfRequest): RfResult {
       rows: heatmap.rows,
       rgba,
       values: heatmap.values,
-    };
-    if (req.suggest) suggestions = suggestRouters(scene, req.floorId, heatmap, params);
+    });
+    if (req.suggest) suggestions.push(...suggestRouters(scene, floorId, heatmap, params));
   }
 
   return {
-    floorId: req.floorId,
-    heat,
+    floorIds: req.floorIds,
+    heats,
     calibration,
     suggestions,
     deviceRssi,

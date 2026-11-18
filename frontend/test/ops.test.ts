@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { History } from "../src/project/history";
 import {
+  addBuilding,
   addFloor,
+  buildingExtent,
+  DEFAULT_BUILDING_ID,
+  floorsOf,
+  removeBuilding,
+  updateBuilding,
   addRoom,
   addWalls,
   createProject,
@@ -20,8 +26,9 @@ import {
 const p = (x: number, y: number) => ({ x, y });
 
 function withFloor() {
-  const { project, floorId } = addFloor(createProject(), "Ground");
-  return { project, floorId };
+  const b = addBuilding(createProject(), "House");
+  const { project, floorId } = addFloor(b.project, "Ground", b.buildingId);
+  return { project, floorId, buildingId: b.buildingId };
 }
 
 describe("ids", () => {
@@ -34,8 +41,8 @@ describe("ids", () => {
 
 describe("floors", () => {
   it("stacks new floors above existing ones", () => {
-    let { project } = withFloor();
-    const second = addFloor(project, "First");
+    let { project, buildingId } = withFloor();
+    const second = addFloor(project, "First", buildingId);
     project = second.project;
     expect(project.floors.map((f) => [f.name, f.level, f.elevation])).toEqual([
       ["Ground", 0, 0],
@@ -44,8 +51,8 @@ describe("floors", () => {
   });
 
   it("keeps floors sorted by level after update", () => {
-    let { project, floorId } = withFloor();
-    project = addFloor(project, "First").project;
+    let { project, floorId, buildingId } = withFloor();
+    project = addFloor(project, "First", buildingId).project;
     project = updateFloor(project, floorId, { level: 5 });
     expect(project.floors.map((f) => f.name)).toEqual(["First", "Ground"]);
   });
@@ -189,5 +196,84 @@ describe("History", () => {
     h.reset(9);
     expect(h.present).toBe(9);
     expect(h.canUndo).toBe(false);
+  });
+});
+
+describe("buildings", () => {
+  it("stacks levels per building and places new buildings beside the site", () => {
+    let { project, buildingId } = withFloor();
+    project = addWalls(project, project.floors[0].id, [
+      { a: p(0, 0), b: p(10, 0), thickness: 0.2, material: "brick" },
+      { a: p(10, 0), b: p(10, 8), thickness: 0.2, material: "brick" },
+    ]).project;
+    const second = addBuilding(project, "Garage");
+    project = second.project;
+    const garage = project.buildings[1];
+    expect(garage.x).toBe(15);
+    expect(garage.color).not.toBe(project.buildings[0].color);
+    project = addFloor(project, "Garage ground", second.buildingId).project;
+    project = addFloor(project, "House first", buildingId).project;
+    expect(floorsOf(project, buildingId).map((f) => [f.name, f.level])).toEqual([
+      ["Ground", 0],
+      ["House first", 1],
+    ]);
+    expect(floorsOf(project, second.buildingId).map((f) => f.level)).toEqual([0]);
+    expect(buildingExtent(project, buildingId)).toEqual({ minX: 0, minY: 0, maxX: 10, maxY: 8 });
+  });
+
+  it("updates and removes a building with its floors and placements", () => {
+    let { project, floorId, buildingId } = withFloor();
+    project = placeDevice(project, "0x1", { floorId, x: 1, y: 1, height: 1 });
+    project = updateBuilding(project, buildingId, { visible: false, x: 3 });
+    expect(project.buildings[0]).toMatchObject({ visible: false, x: 3 });
+    project = removeBuilding(project, buildingId);
+    expect(project.buildings).toEqual([]);
+    expect(project.floors).toEqual([]);
+    expect(project.placements).toEqual({});
+  });
+
+  it("migrates floors without a building into a default one", () => {
+    const project = normalizeProject({
+      version: 1,
+      floors: [{ id: "f", name: "Old", level: 0 }],
+      placements: {},
+    });
+    expect(project.buildings).toHaveLength(1);
+    expect(project.buildings[0].id).toBe(DEFAULT_BUILDING_ID);
+    expect(project.floors[0].buildingId).toBe(DEFAULT_BUILDING_ID);
+  });
+
+  it("assigns orphan floors to the first existing building and drops bad buildings", () => {
+    const project = normalizeProject({
+      version: 1,
+      buildings: [{ id: "b1", name: "A", color: "red", x: "x" }, { id: "b1", name: "dup" }, { name: "no id" }],
+      floors: [{ id: "f", name: "x", level: 0, buildingId: "gone" }],
+    });
+    expect(project.buildings.map((b) => b.id)).toEqual(["b1"]);
+    expect(project.buildings[0].x).toBe(0);
+    expect(project.buildings[0].color).toMatch(/^#/);
+    expect(project.floors[0].buildingId).toBe("b1");
+  });
+});
+
+describe("site levels", () => {
+  it("lists levels and floors of visible buildings", async () => {
+    const { floorsAtLevel, siteLevels } = await import("../src/project/ops");
+    let { project, buildingId } = withFloor();
+    project = addFloor(project, "Up", buildingId).project;
+    const g = addBuilding(project, "Garage");
+    project = addFloor(g.project, "G0", g.buildingId).project;
+    expect(siteLevels(project)).toEqual([0, 1]);
+    expect(floorsAtLevel(project, 0).map((f) => f.name)).toEqual(["Ground", "G0"]);
+    project = updateBuilding(project, buildingId, { visible: false });
+    expect(siteLevels(project)).toEqual([0]);
+    expect(floorsAtLevel(project, 1)).toEqual([]);
+  });
+});
+
+describe("migration naming", () => {
+  it("uses the provided default building name", () => {
+    const project = normalizeProject({ version: 1, floors: [{ id: "f", name: "x", level: 0 }] }, { defaultBuildingName: "Edificio 1" });
+    expect(project.buildings[0].name).toBe("Edificio 1");
   });
 });

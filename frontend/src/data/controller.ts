@@ -2,6 +2,7 @@ import { History } from "../project/history";
 import { createProject, normalizeProject } from "../project/ops";
 import type { NetworkState, Project } from "../types";
 import { FloorplanApi, type InfoResult } from "./api";
+import { translator } from "../i18n";
 import { isWsError, type HomeAssistant } from "./hass";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
@@ -71,7 +72,11 @@ export class FloorplanController {
 
   setHass(hass: HomeAssistant): void {
     this.hassSetter(hass);
+    this.defaultBuildingName = translator(hass.locale?.language ?? hass.language)("building.default_name", { n: 1 });
   }
+
+  /** name for the building created when migrating a plan saved before buildings existed */
+  private defaultBuildingName: string | undefined;
 
   get project(): Project {
     return this.history.present;
@@ -158,7 +163,7 @@ export class FloorplanController {
   }
 
   private adopt(revision: number, raw: unknown): void {
-    const project = normalizeProject(raw);
+    const project = normalizeProject(raw, { defaultBuildingName: this.defaultBuildingName });
     this.revision = revision;
     this.history.reset(project);
     this.persisted = project;
@@ -196,7 +201,7 @@ export class FloorplanController {
 
   /** Replace the whole project (import). Undoable. */
   replace(raw: unknown): void {
-    this.apply(() => normalizeProject(raw));
+    this.apply(() => normalizeProject(raw, { defaultBuildingName: this.defaultBuildingName }));
   }
 
   private markDirty(): void {

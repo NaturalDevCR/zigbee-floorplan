@@ -25,9 +25,20 @@ _WALL = vol.Schema(
 _ROOM = vol.Schema(
     {vol.Required("id"): str, vol.Required("points"): [_PT]}, extra=vol.ALLOW_EXTRA
 )
+_BUILDING = vol.Schema(
+    {
+        vol.Required("id"): str,
+        vol.Required("name"): str,
+        vol.Optional("x"): _NUM,
+        vol.Optional("y"): _NUM,
+        vol.Optional("visible"): bool,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 _FLOOR = vol.Schema(
     {
         vol.Required("id"): str,
+        vol.Optional("buildingId"): str,
         vol.Required("name"): str,
         vol.Required("level"): _NUM,
         vol.Optional("walls", default=list): [_WALL],
@@ -43,6 +54,7 @@ _PLACEMENT = vol.Schema(
 PROJECT_SCHEMA = vol.Schema(
     {
         vol.Required("version"): int,
+        vol.Optional("buildings", default=list): [_BUILDING],
         vol.Required("floors"): [_FLOOR],
         vol.Optional("placements", default=dict): {str: _PLACEMENT},
         vol.Optional("settings", default=dict): dict,
@@ -52,7 +64,7 @@ PROJECT_SCHEMA = vol.Schema(
 
 
 def empty_project() -> dict[str, Any]:
-    return {"version": 1, "floors": [], "placements": {}, "settings": {}}
+    return {"version": 1, "buildings": [], "floors": [], "placements": {}, "settings": {}}
 
 
 class RevisionConflict(Exception):
