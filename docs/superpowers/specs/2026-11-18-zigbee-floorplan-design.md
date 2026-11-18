@@ -63,7 +63,7 @@ Subscribes:
 
 Scan: publishes `{base}/bridge/request/networkmap` with `{"type": "raw", "routes": false}`; status `idle | scanning | error`; timeout 180 s; one scan at a time.
 
-Network map normalization: raw links are neighbor-table entries (target = router whose table it is, source = neighbor, `lqi` as perceived by target, `relationship` 0 parent / 1 child / 2 sibling / 3 none / 4 previous child, `depth`). Normalized to undirected links keyed by sorted ieee pair, keeping `lqi_ab`, `lqi_ba`, `lqi` (max of known), `relationship` (parent/child wins over sibling). Links to unknown nodes are dropped.
+Network map normalization: raw links are neighbor-table entries (target = router whose table it is, source = neighbor, `lqi` as perceived by target, `relationship` 0 parent / 1 child / 2 sibling / 3 none / 4 previous child, `depth`). Normalized to undirected links keyed by sorted ieee pair (`a` < `b`), keeping `lqi_ab` (signal from a perceived by b), `lqi_ba`, `lqi` (max of known), `relationship` (`tree` when either side reports parent/child — wins over `sibling` — else `other`) and `parent` (ieee of the parent on tree links). Links to unknown nodes are dropped.
 
 HA device mapping: device registry lookup by identifier `("mqtt", "zigbee2mqtt_<ieee>")` → `ha_device_id` included per device so the UI can deep-link to the HA device page.
 
@@ -76,7 +76,7 @@ State shape pushed to clients (`NetworkState`):
                "available": true, "lqi": 120, "last_seen": "ISO|null", "battery": 87,
                "ha_device_id": "…|null"}],
   "links": [{"a": "0x…", "b": "0x…", "lqi": 140, "lqi_ab": 140, "lqi_ba": 120,
-             "relationship": "parent|child|sibling|other", "depth": 1}],
+             "relationship": "tree|sibling|other", "parent": "0x…|null", "depth": 1}],
   "scan": {"status": "idle", "last_scan": "ISO|null", "error": null}
 }
 ```
