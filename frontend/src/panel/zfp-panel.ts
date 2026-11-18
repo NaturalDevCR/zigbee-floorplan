@@ -904,7 +904,9 @@ export class ZigbeeFloorplanPanel extends LitElement {
     css`
       :host {
         display: block;
-        height: 100%;
+        /* HA's panel container only wraps content, so size to the viewport */
+        height: 100vh;
+        height: 100dvh;
         background: var(--zfp-bg);
       }
       .app {

@@ -172,6 +172,29 @@ def test_normalize_uses_flat_ieee_fields_and_linkquality() -> None:
     assert links[0]["depth"] is None
 
 
+def test_build_state_falls_back_to_parent_link_lqi() -> None:
+    devices = parse_devices(DEVICES_PAYLOAD)
+    links = normalize_networkmap(
+        {"links": [link(ROUTER, COORD, 140, 1), link(COORD, ROUTER, 120, 0),
+                   link(SENSOR, ROUTER, 55, 1)]},
+        set(devices),
+    )
+    state = build_state(
+        devices=devices,
+        runtime={SENSOR: {"lqi": 99}},
+        links=links,
+        scan={"status": "idle", "last_scan": None, "error": None},
+        bridge_online=True,
+        ha_ids={},
+    )
+    by_ieee = {d["ieee"]: d for d in state["devices"]}
+    # parent (coordinator) hears the router at 140
+    assert by_ieee[ROUTER]["lqi"] == 140
+    # live value from the device's own state messages wins
+    assert by_ieee[SENSOR]["lqi"] == 99
+    assert by_ieee[COORD]["lqi"] is None
+
+
 def test_build_state_merges_runtime_info() -> None:
     devices = parse_devices(DEVICES_PAYLOAD)
     state = build_state(

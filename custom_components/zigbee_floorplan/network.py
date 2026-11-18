@@ -146,6 +146,18 @@ def build_state(
     ha_ids: dict[str, str],
 ) -> dict[str, Any]:
     """Assemble the NetworkState pushed to the frontend."""
+    # Devices that have not sent a state message since startup have no live LQI;
+    # fall back to how their parent hears them in the last network map.
+    parent_lqi: dict[str, int] = {}
+    for lk in links:
+        if lk["relationship"] != "tree" or lk["parent"] is None:
+            continue
+        child = lk["b"] if lk["parent"] == lk["a"] else lk["a"]
+        heard = lk["lqi_ab"] if child == lk["a"] else lk["lqi_ba"]
+        value = heard if heard is not None else lk["lqi"]
+        if value is not None:
+            parent_lqi[child] = value
+
     out = []
     for dev in sorted(
         devices.values(), key=lambda d: (_TYPE_ORDER[d["type"]], d["name"].lower())
@@ -155,7 +167,7 @@ def build_state(
             {
                 **dev,
                 "available": rt.get("available"),
-                "lqi": rt.get("lqi"),
+                "lqi": rt["lqi"] if rt.get("lqi") is not None else parent_lqi.get(dev["ieee"]),
                 "battery": rt.get("battery"),
                 "last_seen": rt.get("last_seen"),
                 "ha_device_id": ha_ids.get(dev["ieee"]),

@@ -1471,7 +1471,9 @@ var e=globalThis,t=e.ShadowRoot&&(e.ShadyCSS===void 0||e.ShadyCSS.nativeShadow)&
     </aside>`}static{this.styles=[z,sn,kr,o`
       :host {
         display: block;
-        height: 100%;
+        /* HA's panel container only wraps content, so size to the viewport */
+        height: 100vh;
+        height: 100dvh;
         background: var(--zfp-bg);
       }
       .app {

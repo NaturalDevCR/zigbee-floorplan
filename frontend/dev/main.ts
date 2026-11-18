@@ -3,6 +3,7 @@ import { createMockHass } from "./mock-hass";
 
 const params = new URLSearchParams(location.search);
 // ?bundle exercises the production build that Home Assistant serves
+// @ts-expect-error the built bundle ships without type declarations
 if (params.has("bundle")) await import("../../custom_components/zigbee_floorplan/frontend/zigbee-floorplan.js");
 else await import("../src/index");
 const dark = params.has("dark");
