@@ -63,8 +63,9 @@ export interface Placement {
   txPower?: number;
 }
 
+/** Result of fitting the path-loss model to real link quality. */
 export interface Calibration {
-  enabled: boolean;
+  applied: boolean;
   offsetDb: number;
   exponent: number;
   rmse: number | null;
@@ -77,7 +78,7 @@ export interface RfSettings {
   rxSensitivity: number;
   defaultTx: { Coordinator: number; Router: number; EndDevice: number };
   materials: Partial<Record<MaterialId, number>>;
-  calibration: Calibration;
+  autoCalibrate: boolean;
 }
 
 export interface Project {
