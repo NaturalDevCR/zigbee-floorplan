@@ -163,7 +163,12 @@ class Z2MAdapter:
         ids: dict[str, str] = {}
         for ieee, device in self._devices.items():
             prefix = _BRIDGE_IDENT_PREFIX if device["type"] == "Coordinator" else _IDENT_PREFIX
-            entry = registry.async_get_device(identifiers={("mqtt", f"{prefix}{ieee}")})
+            identifiers = {("mqtt", f"{prefix}{ieee}")}
+            if hasattr(registry, "async_get_devices"):
+                found = registry.async_get_devices(identifiers=identifiers)
+                entry = found[0] if found else None
+            else:  # Home Assistant before async_get_devices existed
+                entry = registry.async_get_device(identifiers=identifiers)
             if entry:
                 ids[ieee] = entry.id
         changed = ids != self._ha_ids
