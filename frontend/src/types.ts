@@ -32,6 +32,9 @@ export interface Room {
 
 export interface FloorBackground {
   imageId: string;
+  /** natural size in pixels */
+  width: number;
+  height: number;
   x: number;
   y: number;
   /** meters per image pixel */

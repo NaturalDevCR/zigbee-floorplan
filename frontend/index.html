@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zigbee Floorplan · dev</title>
+    <style>
+      :root {
+        --primary-color: #03a9f4;
+        --primary-background-color: #f2f4f7;
+        --card-background-color: #ffffff;
+        --primary-text-color: #141821;
+        --secondary-text-color: #5b6372;
+        --divider-color: rgba(0, 0, 0, 0.12);
+        --app-header-background-color: #ffffff;
+        --app-header-text-color: #141821;
+        --ha-card-border-radius: 12px;
+      }
+      :root.dark {
+        --primary-background-color: #111318;
+        --card-background-color: #1c1f26;
+        --primary-text-color: #e6e8ec;
+        --secondary-text-color: #9aa1ad;
+        --divider-color: rgba(255, 255, 255, 0.12);
+        --app-header-background-color: #1c1f26;
+        --app-header-text-color: #e6e8ec;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--primary-background-color);
+        font-family: Roboto, system-ui, sans-serif;
+      }
+      #root {
+        height: 100%;
+      }
+      #root.cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+        gap: 16px;
+        padding: 16px;
+        box-sizing: border-box;
+        align-content: start;
+      }
+      ha-card {
+        display: block;
+        background: var(--card-background-color);
+        border-radius: 12px;
+        border: 1px solid var(--divider-color);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/dev/main.ts"></script>
+  </body>
+</html>

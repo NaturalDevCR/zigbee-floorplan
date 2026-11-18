@@ -256,8 +256,11 @@ function normRoom(raw: unknown): Room | null {
 function normBackground(raw: unknown): FloorBackground | undefined {
   const b = obj(raw);
   if (typeof b.imageId !== "string" || !/^[0-9a-f]{32}$/.test(b.imageId)) return undefined;
+  if (!(num(b.width, 0) > 0) || !(num(b.height, 0) > 0)) return undefined;
   return {
     imageId: b.imageId,
+    width: num(b.width, 0),
+    height: num(b.height, 0),
     x: num(b.x, 0),
     y: num(b.y, 0),
     scale: num(b.scale, 0.01) > 0 ? num(b.scale, 0.01) : 0.01,

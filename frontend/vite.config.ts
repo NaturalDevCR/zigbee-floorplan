@@ -7,6 +7,7 @@ export default defineConfig({
     outDir: resolve(__dirname, "../custom_components/zigbee_floorplan/frontend"),
     emptyOutDir: true,
     sourcemap: false,
+    minify: true,
     lib: {
       entry: resolve(__dirname, "src/index.ts"),
       formats: ["es"],

@@ -19,6 +19,8 @@ export interface ApiLike {
   subscribeNetwork: FloorplanApi["subscribeNetwork"];
   subscribeProject: FloorplanApi["subscribeProject"];
   scan: FloorplanApi["scan"];
+  imageUrl: FloorplanApi["imageUrl"];
+  uploadImage: FloorplanApi["uploadImage"];
 }
 
 const DETACH_GRACE_MS = 5000;
