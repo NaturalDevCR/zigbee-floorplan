@@ -16,7 +16,8 @@ import {
   TYPE_ICON,
   visibleLinks,
 } from "../ui/device-style";
-import { mdiBatteryAlertVariantOutline, mdiPlus } from "../ui/icons";
+import { getTopology, isRoute } from "../topology";
+import { mdiBatteryAlertVariantOutline, mdiHelpCircleOutline, mdiPlus } from "../ui/icons";
 import { tokens } from "../ui/styles";
 import { snapPoint, type SnapResult } from "./snapping";
 import {
@@ -990,7 +991,8 @@ export class ZfpCanvas extends LitElement {
   }
 
   private renderLinks(devices: Map<string, ZDevice>) {
-    const links = visibleLinks(this.network?.links ?? [], this.linkMode);
+    const topo = getTopology(this.network);
+    const links = visibleLinks(this.network?.links ?? [], this.linkMode, topo);
     const placements = this.shown.placements;
     const positions = this.viewPositions();
     const shift = this.siteShift();
@@ -1011,14 +1013,15 @@ export class ZfpCanvas extends LitElement {
       const bHere = positions.has(link.b);
       if (!aHere && !bHere) continue;
       const focus = highlighted ? link.a === highlighted || link.b === highlighted : true;
-      const cls = `link ${link.relationship} ${focus ? "" : "dim"} ${highlighted && focus ? "focus" : ""}`;
+      const route = isRoute(topo, link);
+      const cls = `link ${route ? "tree" : link.relationship === "tree" ? "tree" : link.relationship} ${focus ? "" : "dim"} ${highlighted && focus ? "focus" : ""}`;
       const color = lqiColor(link.lqi);
       const width = lqiWidth(link.lqi);
       if (aHere && bHere) {
         const sa = toScreen(this._vp, positions.get(link.a)!.pt);
         const sb = toScreen(this._vp, positions.get(link.b)!.pt);
-        // dash flows from child toward parent on route links
-        const [from, to] = link.parent === link.a ? [sb, sa] : [sa, sb];
+        // dashes flow from the child towards its uplink, i.e. towards the coordinator
+        const [from, to] = topo.uplink.get(link.a) === link.b ? [sa, sb] : topo.uplink.get(link.b) === link.a ? [sb, sa] : link.parent === link.a ? [sb, sa] : [sa, sb];
         out.push(svg`<line class=${cls} x1=${from.x} y1=${from.y} x2=${to.x} y2=${to.y}
           stroke=${color} stroke-width=${width}></line>`);
         if (this.layers.labels && link.lqi !== null && (highlighted ? focus : this._vp.scale > 30)) {
@@ -1078,6 +1081,8 @@ export class ZfpCanvas extends LitElement {
     const order = { Coordinator: 3, Router: 2, EndDevice: 1, Unknown: 0 } as const;
     entries.sort(([a], [b]) => order[devices.get(a)?.type ?? "Unknown"] - order[devices.get(b)?.type ?? "Unknown"]);
     const est = this.rf?.deviceRssi ?? {};
+    const topo = getTopology(this.network);
+    const haveLinks = (this.network?.links.length ?? 0) > 0;
     const showLabels = this.layers.labels && this._vp.scale >= 26;
     return svg`<g class="devices">${repeat(
       entries,
@@ -1090,7 +1095,8 @@ export class ZfpCanvas extends LitElement {
         const selected = this.selection.includes(DEVICE_PREFIX + ieee);
         const hovered = this._hoverDevice === ieee || this.highlight === ieee;
         const lowBattery = dev?.battery !== null && dev?.battery !== undefined && dev.battery <= 15;
-        return svg`<g class="device ${type} ${health} ${selected ? "selected" : ""} ${hovered ? "hover" : ""} ${dev ? "" : "missing"}"
+        const noLink = !!dev && type !== "Coordinator" && topo.uplink.get(ieee) === null;
+        return svg`<g class="device ${type} ${health} ${selected ? "selected" : ""} ${hovered ? "hover" : ""} ${dev ? "" : "missing"} ${noLink ? "nolink" : ""}"
             transform="translate(${s.x} ${s.y})">
           ${this.highlight === ieee ? svg`<circle class="pulse" r=${DEVICE_R}></circle>` : nothing}
           ${selected ? svg`<circle class="sel-ring" r=${DEVICE_R + 5}></circle>` : nothing}
@@ -1101,6 +1107,10 @@ export class ZfpCanvas extends LitElement {
           ${lowBattery
             ? svg`<g class="badge" transform="translate(9 -17)"><circle r="8"></circle>
                 <path transform="translate(-6 -6) scale(0.5)" d=${mdiBatteryAlertVariantOutline}></path></g>`
+            : nothing}
+          ${noLink && haveLinks
+            ? svg`<g class="badge nolink-badge" transform="translate(-10 -17)"><title>${this.t("detail.no_link_data")}</title><circle r="8"></circle>
+                <path transform="translate(-6 -6) scale(0.5)" d=${mdiHelpCircleOutline}></path></g>`
             : nothing}
           ${showLabels || selected || hovered
             ? svg`<text class="dev-label" text-anchor="middle" y=${DEVICE_R + 15}>${dev?.name ?? ieee}</text>`
@@ -1376,6 +1386,12 @@ export class ZfpCanvas extends LitElement {
       }
       .device .badge path {
         fill: #fff;
+      }
+      .device .nolink-badge circle {
+        fill: var(--zfp-warning);
+      }
+      .device.nolink .body {
+        stroke-dasharray: 5 3;
       }
       .dev-label {
         font-size: 11.5px;

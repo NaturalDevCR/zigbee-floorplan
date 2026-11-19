@@ -1,4 +1,5 @@
 import { band, WEAK_THRESHOLD } from "../rf/colormap";
+import { isRoute, type Topology } from "../topology";
 import type { DeviceType, ZDevice, ZLink } from "../types";
 import { mdiAccessPoint, mdiRouterWireless, mdiZigbee, mdiHelpCircleOutline } from "./icons";
 
@@ -56,6 +57,7 @@ export function lqiWidth(lqi: number | null): number {
 
 export const isWeakRssi = (rssi: number | undefined) => rssi !== undefined && rssi < WEAK_THRESHOLD;
 
-export function visibleLinks(links: ZLink[], mode: "tree" | "all"): ZLink[] {
-  return mode === "all" ? links : links.filter((l) => l.relationship === "tree");
+/** "tree": only each device's route towards the coordinator; "all": every neighbour link. */
+export function visibleLinks(links: ZLink[], mode: "tree" | "all", topo: Topology): ZLink[] {
+  return mode === "all" ? links : links.filter((l) => isRoute(topo, l));
 }

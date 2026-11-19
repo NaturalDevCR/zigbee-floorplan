@@ -163,6 +163,13 @@ export const paneStyles = css`
     gap: 4px;
     white-space: nowrap;
   }
+  .no-link {
+    color: var(--zfp-warning);
+  }
+  .dev-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .lqi-dot {
     width: 7px;
     height: 7px;

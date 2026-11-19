@@ -1,6 +1,7 @@
 import { css, html, LitElement, nothing } from "lit";
 import { relativeTime, type I18nKey, type Translate } from "../i18n";
 import { band } from "../rf/colormap";
+import { getTopology, linkKey } from "../topology";
 import type { Floor, NetworkState, Placement, ZDevice } from "../types";
 import { deviceHealth, HEALTH_COLOR, lqiColor, TYPE_COLOR, TYPE_ICON } from "./device-style";
 import { icon, mdiClose, mdiCrosshairsGps, mdiOpenInNew } from "./icons";
@@ -42,16 +43,19 @@ export class ZfpDeviceDetail extends LitElement {
 
   private neighbors() {
     const d = this.device;
+    const topo = getTopology(this.network);
     const byIeee = new Map((this.network?.devices ?? []).map((x) => [x.ieee, x]));
+    const rank = { "detail.parent": 0, "detail.child": 1, "detail.neighbor": 2 } as const;
     return (this.network?.links ?? [])
       .filter((l) => l.a === d.ieee || l.b === d.ieee)
       .map((l) => {
         const other = l.a === d.ieee ? l.b : l.a;
-        const role =
-          l.relationship === "tree" ? (l.parent === other ? "detail.parent" : "detail.child") : "detail.sibling";
-        return { link: l, other: byIeee.get(other), ieee: other, role: role as I18nKey };
+        // parent = where this device sends its traffic; child = devices that send through it
+        const role: keyof typeof rank =
+          topo.uplink.get(d.ieee) === other ? "detail.parent" : topo.uplink.get(other) === d.ieee ? "detail.child" : "detail.neighbor";
+        return { link: l, other: byIeee.get(other), ieee: other, role: role as I18nKey, rank: rank[role] };
       })
-      .sort((x, y) => (y.link.lqi ?? -1) - (x.link.lqi ?? -1));
+      .sort((x, y) => x.rank - y.rank || (y.link.lqi ?? -1) - (x.link.lqi ?? -1));
   }
 
   protected render() {
@@ -61,6 +65,14 @@ export class ZfpDeviceDetail extends LitElement {
     const health = deviceHealth(d, this.rssi);
     const floor = this.floors.find((f) => f.id === this.placement?.floorId);
     const neighbors = this.neighbors();
+    const topo = getTopology(this.network);
+    const byIeee = new Map((this.network?.devices ?? []).map((x) => [x.ieee, x]));
+    const uplink = topo.uplink.get(d.ieee) ?? null;
+    const uplinkDev = uplink ? byIeee.get(uplink) : undefined;
+    const uplinkLink = uplink ? this.network?.links.find((l) => linkKey(l.a, l.b) === linkKey(d.ieee, uplink)) : undefined;
+    const hops = topo.hops.get(d.ieee) ?? null;
+    const childIds = topo.children.get(d.ieee) ?? [];
+    const unlinked = d.type !== "Coordinator" && uplink === null && !!this.network?.devices.length;
     const seen = relativeTime(t, d.last_seen);
     return html`
       <div class="head">
@@ -91,6 +103,28 @@ export class ZfpDeviceDetail extends LitElement {
               <span class="k">${t("detail.battery")}</span>
               <span class="v" style=${d.battery <= 15 ? "color:var(--zfp-error)" : ""}>${d.battery}<small>%</small></span>
             </div>`
+          : nothing}
+      </div>
+
+      <div class="route">
+        ${d.type === "Coordinator"
+          ? html`<span class="route-note">${t("detail.is_coordinator")}</span>`
+          : uplink && uplinkDev
+            ? html`<div class="route-row" @mouseenter=${() => this.fire("zfp-highlight", { ieee: uplink })}
+                @mouseleave=${() => this.fire("zfp-highlight", { ieee: null })}
+                @click=${() => this.fire("zfp-open-device", { ieee: uplink })}>
+                <span class="k">${t("detail.connects_via")}</span>
+                <span class="v"><span class="dot" style="background:${TYPE_COLOR[uplinkDev.type]}"></span>${uplinkDev.name}
+                  ${uplinkLink?.lqi != null ? html`<span class="lqi" style="background:${lqiColor(uplinkLink.lqi)}">${uplinkLink.lqi}</span>` : nothing}</span>
+              </div>
+              <div class="route-row"><span class="k">${t("detail.hops")}</span>
+                <span class="v">${hops === 1 ? t("detail.hop_one") : t("detail.hops_value", { n: hops ?? "?" })}</span></div>`
+            : unlinked
+              ? html`<div class="warn-box">${t("detail.no_link_hint")}</div>`
+              : nothing}
+        ${childIds.length
+          ? html`<div class="route-row"><span class="k">${t("detail.children")}</span>
+              <span class="v">${t("detail.child_count", { n: childIds.length })}</span></div>`
           : nothing}
       </div>
 
@@ -213,6 +247,45 @@ export class ZfpDeviceDetail extends LitElement {
       .stat .band {
         font-size: 11px;
         color: var(--zfp-text-2);
+      }
+      .route {
+        display: grid;
+        gap: 4px;
+        font-size: 13px;
+      }
+      .route-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: var(--zfp-surface-2);
+      }
+      .route-row[onclick],
+      .route-row:hover {
+        background: var(--zfp-surface-3);
+      }
+      .route-row .k {
+        color: var(--zfp-text-2);
+      }
+      .route-row .v {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 500;
+        min-width: 0;
+      }
+      .route-note {
+        color: var(--zfp-text-2);
+        font-style: italic;
+      }
+      .warn-box {
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--zfp-warning) 14%, transparent);
+        color: var(--zfp-warning);
+        line-height: 1.45;
       }
       dl {
         display: grid;

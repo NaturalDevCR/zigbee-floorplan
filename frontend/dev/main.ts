@@ -10,6 +10,13 @@ const dark = params.has("dark");
 // ?prefs=<json> seeds the saved UI preferences (view, tab...) for reproducible screenshots
 if (params.has("prefs")) localStorage.setItem("zigbee-floorplan:prefs", params.get("prefs")!);
 const { project, network } = buildFixture();
+if (params.get("demo") === "unscanned") {
+  // devices added after the last scan: placed on the plan but absent from the link data
+  for (const name of ["Study button", "Garage temp", "Dining light"]) {
+    const d = network.devices.find((x) => x.name === name);
+    if (d) network.links = network.links.filter((l) => l.a !== d.ieee && l.b !== d.ieee);
+  }
+}
 if (params.get("demo") === "weak") {
   // a layout with weak spots: fewer routers and heavier interior walls
   const drop = new Set(network.devices.filter((d) => ["Living room plug", "Dining light", "Garage repeater"].includes(d.name)).map((d) => d.ieee));

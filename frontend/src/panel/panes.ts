@@ -8,6 +8,7 @@ import { BANDS } from "../rf/colormap";
 import type { RfResult } from "../rf/engine";
 import { txDefault } from "../rf/model";
 import { BUILDING_COLORS, floorsOf } from "../project/ops";
+import { getTopology } from "../topology";
 import type { Building, Floor, MaterialId, NetworkState, Placement, Project, RfSettings, Room, Wall, ZDevice } from "../types";
 import { deviceHealth, HEALTH_COLOR, isWeakRssi, LQI_WEAK, lqiColor, TYPE_COLOR, TYPE_ICON } from "../ui/device-style";
 import {
@@ -206,6 +207,9 @@ function renderDeviceInspector(ctx: PaneContext, ieee: string): TemplateResult {
 
 function deviceRow(ctx: PaneContext, ieee: string, d: ZDevice | undefined, action?: TemplateResult): TemplateResult {
   const { t } = ctx;
+  const topo = getTopology(ctx.network);
+  const uplinkName = ctx.network?.devices.find((x) => x.ieee === topo.uplink.get(ieee))?.name;
+  const unlinked = !!d && d.type !== "Coordinator" && topo.uplink.get(ieee) === null && (ctx.network?.links.length ?? 0) > 0;
   const type = d?.type ?? "Unknown";
   const health = deviceHealth(d, ctx.rf?.deviceRssi[ieee]);
   const draggable = ctx.canEdit && !!d;
@@ -230,6 +234,7 @@ function deviceRow(ctx: PaneContext, ieee: string, d: ZDevice | undefined, actio
             ? html`<span class="lqi-dot" style="background:${lqiColor(d.lqi)}"></span>LQI ${d.lqi}`
             : t(`type.${type}` as I18nKey)}
         ${d?.battery !== null && d?.battery !== undefined ? html` · ${d.battery}%` : nothing}
+        ${uplinkName ? html` · ↑ ${uplinkName}` : unlinked ? html` · <span class="no-link">${t("detail.no_link_data")}</span>` : nothing}
       </span>
     </span>
     ${action ?? nothing}

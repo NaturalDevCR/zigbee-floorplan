@@ -70,6 +70,7 @@ import {
   mdiSync,
 } from "../ui/icons";
 import { controls, tokens } from "../ui/styles";
+import { getTopology } from "../topology";
 import { isStaleBundle } from "../version";
 import "../ui/toast";
 import type { ZfpToast } from "../ui/toast";
@@ -950,6 +951,16 @@ export class ZigbeeFloorplanPanel extends LitElement {
     } else if (!net.links.length && net.scan.status !== "scanning" && ctrl.info?.is_admin && net.devices.length) {
       banners.push(html`<div class="banner">${icon(mdiRadar, 18)} ${t("banner.scan_hint")}
         <button class="btn small primary" @click=${() => this.scan()}>${t("action.scan")}</button></div>`);
+    } else if (net.links.length && net.scan.status !== "scanning") {
+      const topo = getTopology(net);
+      const unlinked = net.devices.filter((d) => d.type !== "Coordinator" && topo.uplink.get(d.ieee) === null).length;
+      if (unlinked) {
+        banners.push(html`<div class="banner warn">${icon(mdiAlertOutline, 18)}
+          ${unlinked === 1 ? t("banner.unlinked_one") : t("banner.unlinked", { n: unlinked })}
+          ${ctrl.info?.is_admin
+            ? html`<button class="btn small primary" @click=${() => this.scan()}>${t("action.scan")}</button>`
+            : nothing}</div>`);
+      }
     }
     const hint = this._placing
       ? t("hint.place", { name: net?.devices.find((d) => d.ieee === this._placing)?.name ?? "" })
