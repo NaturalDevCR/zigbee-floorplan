@@ -333,7 +333,8 @@ export function renderCoveragePane(ctx: PaneContext): TemplateResult {
   const cal = rf?.calibration;
   const devices = new Map((network?.devices ?? []).map((d) => [d.ieee, d]));
   const weakDevices = Object.entries(rf?.deviceRssi ?? {})
-    .filter(([ieee, v]) => isWeakRssi(v) && devices.has(ieee))
+    // the coordinator is the root of the mesh: an estimate towards other routers says nothing about it
+    .filter(([ieee, v]) => isWeakRssi(v) && devices.has(ieee) && devices.get(ieee)!.type !== "Coordinator")
     .sort((a, b) => a[1] - b[1]);
   const weakLinks = (network?.links ?? [])
     .filter((l) => l.lqi !== null && l.lqi < LQI_WEAK && project.placements[l.a] && project.placements[l.b])

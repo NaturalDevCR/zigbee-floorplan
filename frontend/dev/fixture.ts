@@ -216,6 +216,15 @@ export function buildFixture(): { project: Project; network: NetworkState } {
     d.lqi = lqiOf(up);
   }
   // routers: tree link toward coordinator via the strongest path (simplified: strongest neighbour closer to coordinator)
+  // devices that are in the mesh but not placed on any plan yet
+  for (const [name, parentName, lqi] of [["Attic temp", "Upstairs hall light", 138], ["Bedside button", "Living room plug", 164]] as const) {
+    const d = devices.find((x) => x.name === name);
+    const parent = devices.find((x) => x.name === parentName);
+    if (!d || !parent) continue;
+    const [x, y] = d.ieee < parent.ieee ? [d.ieee, parent.ieee] : [parent.ieee, d.ieee];
+    links.push({ a: x, b: y, lqi, lqi_ab: lqi, lqi_ba: lqi, relationship: "tree", parent: parent.ieee, depth: 2 });
+    d.lqi = lqi;
+  }
   const coord = routers.find((r) => r.type === "Coordinator")!;
   coord.lqi = null;
   for (const r of routers) {

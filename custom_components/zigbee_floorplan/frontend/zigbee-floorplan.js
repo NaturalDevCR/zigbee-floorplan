@@ -1396,7 +1396,7 @@ var e=globalThis,t=e.ShadowRoot&&(e.ShadyCSS===void 0||e.ShadyCSS.nativeShadow)&
     ${m(t(`devices.other_floor`),d.map(t=>$(e,t.ieee,t,C`<span class="chip">${h(n.placements[t.ieee].floorId)}</span>`)))}
     ${m(t(`devices.missing`),p.map(n=>$(e,n,void 0,e.canEdit?C`<button class="icon-btn" title=${t(`action.remove`)} @click=${t=>{t.stopPropagation(),e.unplace(n)}}>${q(yn,18)}</button>`:void 0)))}
     ${!f.length&&a.length&&!o?C`<p class="hint ok">${t(`devices.all_placed`)}</p>`:E}
-  `}function fi(e){let{t,rf:n,project:r,network:i}=e,a=n?.calibration,o=new Map((i?.devices??[]).map(e=>[e.ieee,e])),s=Object.entries(n?.deviceRssi??{}).filter(([e,t])=>ar(t)&&o.has(e)).sort((e,t)=>e[1]-t[1]),c=(i?.links??[]).filter(e=>e.lqi!==null&&e.lqi<60&&r.placements[e.a]&&r.placements[e.b]).sort((e,t)=>(e.lqi??0)-(t.lqi??0)).slice(0,8),l=(n?.suggestions??[]).filter(t=>e.displayedFloorIds.includes(t.floorId)),u=Object.keys(r.placements).some(e=>{let t=o.get(e)?.type;return t===`Coordinator`||t===`Router`});return C`
+  `}function fi(e){let{t,rf:n,project:r,network:i}=e,a=n?.calibration,o=new Map((i?.devices??[]).map(e=>[e.ieee,e])),s=Object.entries(n?.deviceRssi??{}).filter(([e,t])=>ar(t)&&o.has(e)&&o.get(e).type!==`Coordinator`).sort((e,t)=>e[1]-t[1]),c=(i?.links??[]).filter(e=>e.lqi!==null&&e.lqi<60&&r.placements[e.a]&&r.placements[e.b]).sort((e,t)=>(e.lqi??0)-(t.lqi??0)).slice(0,8),l=(n?.suggestions??[]).filter(t=>e.displayedFloorIds.includes(t.floorId)),u=Object.keys(r.placements).some(e=>{let t=o.get(e)?.type;return t===`Coordinator`||t===`Router`});return C`
     <section>
       <div class="section-title">${t(`coverage.legend`)}</div>
       <div class="legend">

@@ -1,111 +1,98 @@
-# Zigbee Floorplan para Home Assistant
+# Zigbee Floorplan for Home Assistant
 
-Visualiza tu red **Zigbee2MQTT** sobre planos interactivos de tu casa: varios pisos, paredes con materiales reales, enlaces del mesh en vivo y un mapa de cobertura estimada que se calibra con la calidad de enlace (LQI) real de tus dispositivos.
+[![CI](https://github.com/NaturalDevCR/zigbee-floorplan/actions/workflows/ci.yml/badge.svg)](https://github.com/NaturalDevCR/zigbee-floorplan/actions/workflows/ci.yml)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![License: MIT](https://img.shields.io/github/license/NaturalDevCR/zigbee-floorplan)](LICENSE)
 
-- **Varios edificios o zonas** (casa, taller, oficinas…), cada uno con sus pisos. Ábrelos por separado o júntalos en la vista **Todo el sitio**, donde se ocultan/muestran y se arrastran para ubicarlos entre sí.
-- **Editor de planos** con grid, ajuste a vértices/paredes/ángulos, cotas en vivo, deshacer/rehacer y autoguardado.
-- **Imagen de fondo** (foto o plano) con escala calibrable: dibuja una línea sobre una medida conocida.
-- **Materiales** por pared (drywall, madera, vidrio, Low‑E, ladrillo, bloque, concreto, concreto armado, metal) y losa por piso, con atenuación en dB editable.
-- **Dispositivos** arrastrables desde la lista; estado en vivo (online, LQI, batería), detalle con vecinos y acceso directo al dispositivo en HA.
-- **Enlaces reales** del network map de Zigbee2MQTT (rutas o todos los vecinos), coloreados por LQI, incluso entre pisos.
-- **Cobertura RF**: heatmap por piso (modelo multi‑pared), calibrado automáticamente con tus enlaces reales; dispositivos y enlaces débiles; **sugerencias de dónde poner un router**.
-- **Panel lateral** para editar + **tarjeta Lovelace** para dashboards. Tema claro/oscuro de HA, móvil, español e inglés.
+Draw your home on a floor plan, drop your **Zigbee2MQTT** devices on it and see how the mesh really connects: who routes through whom, how strong each link is, and where the signal gets weak.
 
-## Requisitos
+[Español](README.es.md)
 
-- Home Assistant 2025.8 o superior.
-- Integración **MQTT** configurada y **Zigbee2MQTT** publicando en ese broker.
+![Floor plan with live Zigbee links and a device detail](docs/images/overview.png)
 
-## Instalación
+## Features
 
-### HACS (repositorio personalizado)
+- **Floor plan editor.** Grid with snapping, live measurements, rooms, undo/redo and autosave. Trace over a photo or blueprint and set its scale by drawing over a known length.
+- **Several floors and several buildings.** Model a house, a workshop, an office… each with its own floors. Open one building at a time, or the **whole site** with buildings you can show, hide and drag into place.
+- **Wall materials.** Drywall, wood, glass, low‑E glass, brick, block, concrete, reinforced concrete and metal, plus the floor slab of every level. Attenuation values are editable.
+- **The real mesh.** Links from the Zigbee2MQTT network map, colored by link quality (LQI), with the route of every device to the coordinator, hop counts, parents and children. Devices missing from the last scan are flagged.
+- **Coverage estimate.** A multi‑wall RF model draws a heatmap per floor, calibrates itself with the LQI your devices actually report, lists weak devices and links, and **suggests where to add a router**.
+- **Panel and card.** A full editor in the sidebar and a Lovelace card for your dashboards. Light and dark themes, phone friendly, English and Spanish.
 
-1. HACS → ⋮ → *Repositorios personalizados* → agrega la URL de este repositorio como tipo **Integración**.
-2. Instala **Zigbee Floorplan** y reinicia Home Assistant.
+| Whole site | Coverage and suggestions |
+|---|---|
+| ![Site view with two buildings](docs/images/site.png) | ![Coverage heatmap](docs/images/coverage.png) |
+
+## Requirements
+
+- Home Assistant **2026.10** or newer.
+- The **MQTT** integration, with **Zigbee2MQTT** publishing to the same broker.
+
+Zigbee Home Automation (ZHA) is not supported yet; the data source is isolated so it can be added later.
+
+## Installation
+
+### HACS (recommended)
+
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=NaturalDevCR&repository=zigbee-floorplan&category=integration)
+
+1. In HACS, open the menu ⋮ → **Custom repositories**, add `https://github.com/NaturalDevCR/zigbee-floorplan` as an **Integration**.
+2. Download **Zigbee Floorplan** and restart Home Assistant.
+3. **Settings → Devices & services → Add integration → Zigbee Floorplan**, and enter your Zigbee2MQTT `base_topic` (usually `zigbee2mqtt`).
 
 ### Manual
 
-Copia `custom_components/zigbee_floorplan` a `/config/custom_components/` y reinicia.
+Copy `custom_components/zigbee_floorplan` into your `/config/custom_components/` folder, restart Home Assistant and add the integration as above.
 
-### Configuración
+More detail in [docs/installation.md](docs/installation.md).
 
-*Ajustes → Dispositivos y servicios → Agregar integración → Zigbee Floorplan*. Indica el `base_topic` de Zigbee2MQTT (normalmente `zigbee2mqtt`). En *Opciones* puedes activar un escaneo automático del mapa de red cada 6/12/24 h.
+## Quick start
 
-La integración registra el panel **Zigbee Floorplan** en la barra lateral y carga la tarjeta automáticamente (no hace falta agregar recursos a Lovelace).
+1. Open **Zigbee Floorplan** in the sidebar and press **Create first floor**.
+2. Optionally upload an image of your plan (**Floor** tab) and use **Set scale** over a length you know.
+3. Draw walls (`W`) choosing a material, and mark rooms (`R`) so coverage is computed inside them.
+4. From **Devices**, drag each device onto the plan.
+5. Press **Scan network** to read the real links. Then open **Coverage** for weak spots and router suggestions.
 
-## Uso rápido
+Only administrators can edit; everyone else gets a read‑only view. The full guide is in [docs/usage.md](docs/usage.md).
 
-1. Abre **Zigbee Floorplan** en la barra lateral y pulsa **Crear el primer piso**.
-2. (Opcional) En la pestaña **Piso**, sube una imagen del plano y usa **Fijar escala** sobre una medida conocida.
-3. Dibuja paredes (**W**) eligiendo material y grosor; marca habitaciones (**R**) para delimitar el área de cobertura.
-4. En **Dispositivos**, arrastra cada dispositivo al plano (o toca **Ubicar**). Ajusta su altura en **Detalles**.
-5. Pulsa **Escanear red** para obtener los enlaces reales. La pestaña **Cobertura** muestra la calibración, zonas y dispositivos débiles y sugerencias de routers.
-
-Solo administradores pueden editar; los demás usuarios ven el plano en modo lectura.
-
-### Edificios y sitio
-
-- El selector junto al título cambia entre **Todo el sitio** y cada edificio, y permite **Agregar edificio**.
-- En un edificio, las pestañas son sus pisos; ahí se dibujan paredes, habitaciones y dispositivos.
-- En **Todo el sitio**, las pestañas son niveles (0, 1, 2…) y se muestra ese piso de cada edificio visible. En modo Editar, arrastra un edificio para posicionarlo; clic en su nombre para abrirlo. La pestaña **Edificios** permite ocultar/mostrar, ajustar posición y color.
-- La cobertura entre edificios suma las paredes exteriores de ambos; las losas solo cuentan dentro del mismo edificio. Los enlaces hacia otro edificio aparecen como un trazo corto con su nombre.
-
-### Atajos
-
-| Tecla | Acción |
-|---|---|
-| V / W / R / M / C / H | Seleccionar / Paredes / Habitaciones / Medir / Escalar imagen / Mover |
-| Shift (mientras dibujas) | Desactiva el ajuste |
-| Enter · Esc · doble clic | Termina la pared o habitación |
-| Supr / Retroceso | Elimina la selección (los dispositivos se quitan del plano) |
-| Flechas (+Shift) | Desplaza la selección un paso de grid (×10) |
-| Ctrl/Cmd+D | Duplica paredes seleccionadas |
-| Ctrl/Cmd+Z · Ctrl/Cmd+Shift+Z | Deshacer · Rehacer |
-| F · + · − · Espacio+arrastrar | Ajustar vista · Zoom · Mover vista |
-
-## Tarjeta Lovelace
+## Lovelace card
 
 ```yaml
 type: custom:zigbee-floorplan-card
-title: Red Zigbee
-floor: ""            # id de piso; vacío = primero
+title: Zigbee network
+building: site        # optional: "site" or a building id
 height: 420
-links: tree          # tree (rutas) | all (todos los vecinos)
-show_floor_tabs: true
-building: site       # opcional: "site" (todo el sitio) o id de edificio
-layers: [heatmap, links, labels, background]   # también: suggestions
+links: tree           # tree (routes) | all (every neighbour)
+layers: [heatmap, links, labels, background]
 ```
 
-También tiene editor visual.
+The card has a visual editor. See [docs/lovelace-card.md](docs/lovelace-card.md).
 
-## Cómo se estima la cobertura
+![Dashboard cards](docs/images/card.png)
 
-Modelo multi‑pared (estilo COST 231):
+## Documentation
 
-```
-RSSI = Tx − PL0 − 10·n·log10(d) − Σ paredes cruzadas (dB) − Σ losas cruzadas (dB)
-```
+| | |
+|---|---|
+| [Installation](docs/installation.md) | HACS, manual install, options, upgrading |
+| [Using the editor](docs/usage.md) | Drawing, devices, buildings, shortcuts |
+| [Coverage model](docs/coverage-model.md) | How signal is estimated and calibrated |
+| [Lovelace card](docs/lovelace-card.md) | Card options |
+| [Troubleshooting](docs/troubleshooting.md) | Common problems |
+| [Architecture](docs/architecture.md) | How it is built |
+| [Development](docs/development.md) | Running tests, building, contributing |
 
-- Valores iniciales: PL0 = 40 dB a 1 m (2.4 GHz), n = 2.2, Tx 5 dBm (coordinador/router), 3 dBm (dispositivo final). La potencia se puede ajustar por dispositivo.
-- **Calibración**: con al menos 3 mediciones reales entre dispositivos ubicados, se ajustan `n` y un offset por mínimos cuadrados (n limitado a 1.6–4.0). La conversión LQI→RSSI (`−100 + LQI·60/255`) es aproximada y varía según el chip, por lo que el mapa es una estimación para comparar ubicaciones, no una medición.
-- Las sugerencias de router buscan puntos con buena señal del mesh existente (≥ −80 dBm) que más área débil (< −85 dBm) y dispositivos débiles mejoran.
+## Your data
 
-## Datos y privacidad
+- The plan is stored in `/config/.storage/zigbee_floorplan.project` and the last network scan in `/config/.storage/zigbee_floorplan.network`.
+- Background images live in `/config/zigbee_floorplan/images/` (PNG, JPEG or WebP, up to 15 MB) and are only served to signed‑in users.
+- Nothing leaves your Home Assistant. Use the ⋮ menu in the panel to export or import the plan as JSON.
 
-- Plano: `/config/.storage/zigbee_floorplan.project`; último mapa de red: `/config/.storage/zigbee_floorplan.network`.
-- Imágenes: `/config/zigbee_floorplan/images/` (solo PNG/JPEG/WebP, máx. 15 MB, servidas solo a usuarios autenticados).
-- Exporta/importa el plano en JSON desde el menú ⋮ del panel.
+## Contributing
 
-## Desarrollo
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```bash
-uv venv -p 3.14 .venv && uv pip install -p .venv -r requirements_test.txt
-.venv/bin/pytest
-cd frontend && npm install
-npm test            # vitest
-npm run typecheck
-npm run dev         # harness con hass simulado: ?view=card, ?dark, ?empty, ?readonly, ?nodata, ?lang=en, ?bundle
-npm run build       # genera custom_components/zigbee_floorplan/frontend/zigbee-floorplan.js
-```
+## License
 
-El adaptador de datos (`z2m.py`) está aislado: una versión para ZHA solo necesita producir el mismo `NetworkState`.
+[MIT](LICENSE)

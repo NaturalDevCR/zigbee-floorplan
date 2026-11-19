@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect and what happened instead? Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.11.2"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Zigbee Floorplan version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: z2m_version
+    attributes:
+      label: Zigbee2MQTT version
+  - type: input
+    id: browser
+    attributes:
+      label: Browser or app
+      placeholder: "Chrome 142 on macOS, Home Assistant Companion app…"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Lines from Settings → System → Logs filtered by `zigbee_floorplan`, and browser console errors if any.
+      render: text

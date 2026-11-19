@@ -41,8 +41,8 @@ const root = document.getElementById("root")!;
 if (view === "card") {
   root.className = "cards";
   for (const cfg of [
-    { type: "custom:zigbee-floorplan-card", title: "Red Zigbee", height: 420 },
-    { type: "custom:zigbee-floorplan-card", title: "Sitio", building: "site", height: 360 },
+    { type: "custom:zigbee-floorplan-card", title: "Zigbee network", height: 420 },
+    { type: "custom:zigbee-floorplan-card", title: "Site", building: "site", height: 360 },
     { type: "custom:zigbee-floorplan-card", floor: "upper", height: 320, layers: ["links", "labels"], show_floor_tabs: false },
   ]) {
     const card = document.createElement("zigbee-floorplan-card") as HTMLElement & { setConfig(c: unknown): void; hass: unknown };
@@ -57,4 +57,20 @@ if (view === "card") {
   panel.narrow = mq.matches;
   mq.addEventListener("change", () => (panel.narrow = mq.matches));
   root.appendChild(panel);
+}
+
+// ?tab=<inspector|devices|coverage|floor|buildings> and ?select=<device name> for reproducible screenshots
+if (view !== "card" && (params.has("tab") || params.has("select"))) {
+  const panel = root.querySelector("zigbee-floorplan-panel") as unknown as {
+    _tab: string;
+    ctrl?: { ready: boolean; network: { devices: { ieee: string; name: string }[] } | null };
+    openDevice(ieee: string): void;
+  };
+  const apply = () => {
+    if (!panel.ctrl?.ready || !panel.ctrl.network) return setTimeout(apply, 100);
+    const name = params.get("select");
+    if (name) panel.openDevice(panel.ctrl.network.devices.find((d) => d.name === name)!.ieee);
+    if (params.has("tab")) panel._tab = params.get("tab")!;
+  };
+  apply();
 }
